@@ -10,18 +10,28 @@ from sklearn.metrics import confusion_matrix
 import torchvision
 from model import EfficientNetModel
 from dataset import CIFAR100Dataset
+from tqdm import tqdm
 
 class ModelAnalyzer:
     def __init__(self, model_path='checkpoints/best_model.pth', logs_dir='runs/efficientnet_cifar100'):
         """Initialize the analyzer with model and data"""
+        print("\nInitializing ModelAnalyzer...")
+        print(f"Using device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
+        
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"Loading model from: {model_path}")
         self.model = self._load_model(model_path)
-        self.dataset = CIFAR100Dataset(batch_size=64, num_workers=4)
+        
+        print("Loading CIFAR-100 dataset...")
+        self.dataset = CIFAR100Dataset(batch_size=256, num_workers=4)
         _, self.test_loader = self.dataset.get_data_loaders()
         self.class_names = self.dataset.classes
+        
+        print(f"Setting up directories...")
         self.logs_dir = Path(logs_dir)
         self.output_dir = Path('analysis_results')
         self.output_dir.mkdir(exist_ok=True)
+        print(f"Results will be saved in: {self.output_dir}/")
         
     def _load_model(self, model_path):
         """Load the trained model"""
@@ -33,14 +43,16 @@ class ModelAnalyzer:
     
     def plot_training_history(self):
         """Plot training vs validation accuracy/loss from TensorBoard logs"""
+        print("\nPlotting training history...")
         try:
             from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
             event_acc = EventAccumulator(str(self.logs_dir))
             event_acc.Reload()
             
             # Extract scalars
-            train_acc = pd.DataFrame(event_acc.Scalars('Accuracy/train_top1'))
-            test_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test_top1'))
+            print("Extracting metrics from TensorBoard logs...")
+            train_acc = pd.DataFrame(event_acc.Scalars('Accuracy/train'))
+            test_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test'))
             train_loss = pd.DataFrame(event_acc.Scalars('Loss/train'))
             test_loss = pd.DataFrame(event_acc.Scalars('Loss/test'))
             
@@ -66,19 +78,23 @@ class ModelAnalyzer:
             ax2.grid(True)
             
             plt.tight_layout()
-            plt.savefig(self.output_dir / 'training_history.png', dpi=300, bbox_inches='tight')
+            save_path = self.output_dir / 'training_history.png'
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()
+            print(f"Training history plot saved to: {save_path}")
             
         except Exception as e:
             print(f"Error plotting training history: {e}")
     
     def compute_confusion_matrix(self):
         """Compute and plot confusion matrix"""
+        print("\nComputing confusion matrix...")
         all_preds = []
         all_labels = []
         
+        print("Running inference on test set...")
         with torch.no_grad():
-            for images, labels in self.test_loader:
+            for images, labels in tqdm(self.test_loader, desc="Processing test set"):
                 images = images.to(self.device)
                 outputs = self.model.get_model()(images)
                 _, predicted = outputs.max(1)
@@ -86,6 +102,7 @@ class ModelAnalyzer:
                 all_labels.extend(labels.numpy())
         
         # Compute confusion matrix
+        print("Generating confusion matrices...")
         cm = confusion_matrix(all_labels, all_preds)
         cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
         
@@ -95,8 +112,10 @@ class ModelAnalyzer:
         plt.title('Raw Confusion Matrix')
         plt.xlabel('Predicted')
         plt.ylabel('True')
-        plt.savefig(self.output_dir / 'confusion_matrix_raw.png', dpi=300, bbox_inches='tight')
+        save_path = self.output_dir / 'confusion_matrix_raw.png'
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
+        print(f"Raw confusion matrix saved to: {save_path}")
         
         # Plot normalized confusion matrix
         plt.figure(figsize=(20, 20))
@@ -104,13 +123,16 @@ class ModelAnalyzer:
         plt.title('Normalized Confusion Matrix')
         plt.xlabel('Predicted')
         plt.ylabel('True')
-        plt.savefig(self.output_dir / 'confusion_matrix_normalized.png', dpi=300, bbox_inches='tight')
+        save_path = self.output_dir / 'confusion_matrix_normalized.png'
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
+        print(f"Normalized confusion matrix saved to: {save_path}")
         
         return cm, cm_norm
     
     def compute_class_accuracies(self):
         """Compute per-class accuracies"""
+        print("\nComputing class-wise accuracies...")
         cm, _ = self.compute_confusion_matrix()
         class_correct = np.diag(cm)
         class_total = np.sum(cm, axis=1)
@@ -126,7 +148,9 @@ class ModelAnalyzer:
         df = df.sort_values('Accuracy', ascending=False)
         
         # Save to CSV
-        df.to_csv(self.output_dir / 'class_accuracies.csv', index=False)
+        save_path = self.output_dir / 'class_accuracies.csv'
+        df.to_csv(save_path, index=False)
+        print(f"Class accuracies saved to: {save_path}")
         
         # Plot top and bottom 10 classes
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
@@ -142,13 +166,16 @@ class ModelAnalyzer:
         ax2.set_xticklabels(ax2.get_xticklabels(), rotation=45, ha='right')
         
         plt.tight_layout()
-        plt.savefig(self.output_dir / 'class_accuracies.png', dpi=300, bbox_inches='tight')
+        save_path = self.output_dir / 'class_accuracies.png'
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
+        print(f"Class accuracies plot saved to: {save_path}")
         
         return df
     
     def find_most_confused_pairs(self):
         """Find and visualize top-10 most confused class pairs"""
+        print("\nFinding most confused class pairs...")
         cm, _ = self.compute_confusion_matrix()
         np.fill_diagonal(cm, 0)  # Remove diagonal elements
         
@@ -172,8 +199,10 @@ class ModelAnalyzer:
         plt.xlabel('Number of Confusions')
         
         plt.tight_layout()
-        plt.savefig(self.output_dir / 'confused_pairs.png', dpi=300, bbox_inches='tight')
+        save_path = self.output_dir / 'confused_pairs.png'
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
+        print(f"Confused pairs plot saved to: {save_path}")
         
         # Save to CSV
         df = pd.DataFrame({
@@ -181,12 +210,15 @@ class ModelAnalyzer:
             'Predicted Class': [self.class_names[j] for _,j,_ in top_10_pairs],
             'Count': counts
         })
-        df.to_csv(self.output_dir / 'confused_pairs.csv', index=False)
+        save_path = self.output_dir / 'confused_pairs.csv'
+        df.to_csv(save_path, index=False)
+        print(f"Confused pairs data saved to: {save_path}")
         
         return df
     
     def visualize_misclassified(self, num_samples=10):
         """Visualize sample misclassified images"""
+        print("\nFinding and visualizing misclassified samples...")
         misclassified_images = []
         misclassified_labels = []
         misclassified_preds = []
@@ -207,6 +239,8 @@ class ModelAnalyzer:
                 if len(misclassified_images) >= num_samples:
                     break
         
+        print(f"Found {len(misclassified_images)} misclassified samples")
+        
         # Plot samples
         fig, axes = plt.subplots(2, 5, figsize=(20, 8))
         axes = axes.ravel()
@@ -225,11 +259,14 @@ class ModelAnalyzer:
             axes[idx].set_title(f'True: {true_label}\nPred: {pred_label}', fontsize=8)
         
         plt.tight_layout()
-        plt.savefig(self.output_dir / 'misclassified_samples.png', dpi=300, bbox_inches='tight')
+        save_path = self.output_dir / 'misclassified_samples.png'
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
+        print(f"Misclassified samples visualization saved to: {save_path}")
     
     def summarize_model(self):
         """Create summary table with model details"""
+        print("\nGenerating model summary...")
         # Count parameters
         total_params = sum(p.numel() for p in self.model.get_model().parameters())
         trainable_params = sum(p.numel() for p in self.model.get_model().parameters() if p.requires_grad)
@@ -237,6 +274,7 @@ class ModelAnalyzer:
         # Compute accuracy on test set
         correct = 0
         total = 0
+        print("Computing test set accuracy...")
         with torch.no_grad():
             for images, labels in self.test_loader:
                 images = images.to(self.device)
@@ -255,21 +293,68 @@ class ModelAnalyzer:
         })
         
         # Save to CSV
-        summary.to_csv(self.output_dir / 'model_summary.csv', index=False)
+        save_path = self.output_dir / 'model_summary.csv'
+        summary.to_csv(save_path, index=False)
+        print(f"Model summary saved to: {save_path}")
         
         return summary
+    
+    def compute_accuracies(self):
+        """Compute top-1 and top-5 accuracies on test set"""
+        print("\nComputing top-1 and top-5 accuracies...")
+        correct_top1 = 0
+        correct_top5 = 0
+        total = 0
+        
+        with torch.no_grad():
+            for images, labels in tqdm(self.test_loader, desc="Computing accuracies"):
+                images = images.to(self.device)
+                labels = labels.to(self.device)
+                outputs = self.model.get_model()(images)
+                
+                # Top-1 accuracy
+                _, predicted = outputs.max(1)
+                correct_top1 += predicted.eq(labels).sum().item()
+                
+                # Top-5 accuracy
+                _, top5_pred = outputs.topk(5, 1, True, True)
+                correct_top5 += top5_pred.eq(labels.view(-1, 1)).sum().item()
+                
+                total += labels.size(0)
+        
+        top1_accuracy = 100. * correct_top1 / total
+        top5_accuracy = 100. * correct_top5 / total
+        
+        print(f"\nTest Set Performance:")
+        print(f"Top-1 Accuracy: {top1_accuracy:.2f}%")
+        print(f"Top-5 Accuracy: {top5_accuracy:.2f}%")
+        
+        # Save to CSV
+        df = pd.DataFrame({
+            'Metric': ['Top-1 Accuracy', 'Top-5 Accuracy'],
+            'Value': [f"{top1_accuracy:.2f}%", f"{top5_accuracy:.2f}%"]
+        })
+        save_path = self.output_dir / 'accuracies.csv'
+        df.to_csv(save_path, index=False)
+        print(f"Accuracies saved to: {save_path}")
+        
+        return top1_accuracy, top5_accuracy
 
 def main():
     """Run all analyses"""
+    print("Starting model analysis...")
     analyzer = ModelAnalyzer()
     
-    print("1. Plotting training history...")
+    print("\nComputing accuracies...")
+    top1_acc, top5_acc = analyzer.compute_accuracies()
+    
+    print("\n1. Plotting training history...")
     analyzer.plot_training_history()
     
-    print("2. Computing confusion matrices...")
+    print("\n2. Computing confusion matrices...")
     analyzer.compute_confusion_matrix()
     
-    print("3. Computing class-wise accuracies...")
+    print("\n3. Computing class-wise accuracies...")
     class_accuracies = analyzer.compute_class_accuracies()
     print("\nTop 5 classes:")
     print(class_accuracies.head())
@@ -286,7 +371,8 @@ def main():
     
     print("\n6. Generating model summary...")
     summary = analyzer.summarize_model()
-    print(summary)
+    print("\nModel Summary:")
+    print(summary.to_string(index=False))
     
     print("\nAnalysis complete! Results saved in 'analysis_results' directory.")
 
