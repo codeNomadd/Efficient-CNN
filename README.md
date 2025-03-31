@@ -1,43 +1,52 @@
-# EfficientNet-B0 on CIFAR-100 with Apple Silicon MPS
+# EfficientNet CIFAR-100 Classification
 
-This project implements fine-tuning of EfficientNet-B0 on the CIFAR-100 dataset using PyTorch with Apple Silicon MPS (Metal Performance Shaders) acceleration. The implementation includes a complete training pipeline with monitoring, visualization, and checkpointing capabilities.
+This project implements EfficientNet-B0 for CIFAR-100 image classification using PyTorch. It includes a complete training pipeline with comprehensive analysis tools, monitoring, and visualization capabilities.
 
 ## Features
 
-- EfficientNet-B0 model pretrained on ImageNet
-- Fine-tuning on CIFAR-100 dataset
-- Apple Silicon MPS (GPU) acceleration support
-- Training metrics visualization
-- Tensorboard integration
-- Model checkpointing
-- Progress bars and detailed logging
+- EfficientNet-B0 model (pretrained on ImageNet)
+- CIFAR-100 dataset training pipeline
+- Automatic hardware acceleration (CUDA/CPU)
+- Mixed precision training
+- Comprehensive analysis tools:
+  - Training/validation metrics visualization
+  - Confusion matrices
+  - Per-class accuracy analysis
+  - Most confused class pairs
+  - Misclassified sample visualization
+  - Model performance summary
+- TensorBoard integration
+- Checkpointing system
+- System resource monitoring
 
 ## Project Structure
 
 ```
-efficientnet-cifar100/
-├── main.py          # Main training pipeline
-├── model.py         # EfficientNet model wrapper
-├── dataset.py       # CIFAR-100 dataset loader
-├── train.py         # Training loop implementation
-├── README.md        # This file
-├── requirements.txt # Project dependencies
-└── checkpoints/     # Saved model checkpoints
+.
+├── main.py              # Training pipeline entry point
+├── model.py             # EfficientNet model implementation
+├── dataset.py           # CIFAR-100 dataset handling
+├── train.py             # Training loop and metrics
+├── analyze_results.py   # Results analysis and visualization
+├── monitor.py           # System resource monitoring
+├── requirements.txt     # Project dependencies
+└── README.md           # Documentation
 ```
 
 ## Requirements
 
 - Python 3.8+
 - PyTorch 2.0+
-- macOS 13.0+ with Apple Silicon (M1/M2)
-- Other dependencies listed in requirements.txt
+- Required packages listed in `requirements.txt`
 
 ## Installation
 
-1. Create a virtual environment (recommended):
+1. Create and activate a virtual environment:
 ```bash
 python -m venv venv
-source venv/bin/activate  # On macOS/Linux
+source venv/bin/activate  # On Unix/macOS
+# or
+venv\Scripts\activate     # On Windows
 ```
 
 2. Install dependencies:
@@ -47,84 +56,91 @@ pip install -r requirements.txt
 
 ## Usage
 
-1. Run the training pipeline:
+### Training
+
+1. Start training:
 ```bash
 python main.py
 ```
 
-2. Monitor training progress:
-- Watch the console output for epoch-wise progress
-- View Tensorboard logs:
+2. Monitor progress:
+- Console output shows epoch-wise metrics
+- View live training curves:
 ```bash
 tensorboard --logdir=runs/efficientnet_cifar100
 ```
 
-3. Check results:
-- Training metrics plot: `training_metrics.png`
-- Best model checkpoint: `checkpoints/best_model.pth`
-- Tensorboard logs: `runs/efficientnet_cifar100/`
+### Analysis
 
-## Model Details
+After training, analyze results:
+```bash
+python analyze_results.py
+```
+
+This generates comprehensive visualizations and metrics in the `analysis_results` directory:
+- Training/validation curves (`training_history.png`)
+- Confusion matrices (`confusion_matrix_raw.png`, `confusion_matrix_normalized.png`)
+- Class-wise performance (`class_accuracies.csv`, `class_accuracies.png`)
+- Most confused class pairs (`confused_pairs.csv`, `confused_pairs.png`)
+- Misclassified examples (`misclassified_samples.png`)
+- Model summary (`model_summary.csv`)
+
+## Model Architecture
 
 ### EfficientNet-B0
-- Architecture: EfficientNet-B0 (pretrained on ImageNet)
+- Base architecture: EfficientNet-B0
 - Input size: 224x224
-- Number of classes: 100 (CIFAR-100)
-- Optimizer: Adam (learning rate: 0.001)
+- Output classes: 100 (CIFAR-100)
+- Parameters: ~4.1M
+- Target accuracy: 84.4% (top-1)
+
+### Training Configuration
+- Optimizer: Adam
+- Learning rate: 0.001
+- Scheduler: ReduceLROnPlateau
 - Loss function: CrossEntropyLoss
+- Batch size: 128
+- Mixed precision training enabled
 
 ### Data Augmentation
 - Random horizontal flip
-- Random rotation (±10 degrees)
+- Random rotation
 - Color jittering
-- Normalization (ImageNet stats)
+- Normalization
 
-## Performance
+## Performance Monitoring
 
-### Expected Results
-- Training time: ~2-3x faster on MPS vs CPU
-- Target accuracy: 60%+ top-1 accuracy on CIFAR-100
-- Memory usage: ~1-2GB GPU memory
-
-### MPS Acceleration
-- Automatically detects and uses Apple Silicon GPU
-- Falls back to CPU if MPS is not available
-- Provides significant speedup for training and inference
-
-## Monitoring and Visualization
-
-1. Real-time metrics:
-   - Training loss
-   - Validation loss
-   - Training accuracy
-   - Validation accuracy
-
-2. Visualization tools:
-   - Matplotlib plots for loss and accuracy
-   - Tensorboard for detailed metrics
-   - Progress bars for training and evaluation
+The training pipeline includes comprehensive monitoring:
+- Training/validation metrics
+- System resource usage (CPU, RAM, GPU if available)
+- Training time per epoch
+- Learning rate scheduling
+- Memory management
 
 ## Checkpointing
 
-- Saves best model based on validation accuracy
-- Stores training state (epoch, optimizer, loss, accuracy)
-- Checkpoints saved in `checkpoints/` directory
+- Best model saved based on validation accuracy
+- Checkpoint contains:
+  - Model state
+  - Optimizer state
+  - Training metrics
+  - Current epoch
 
 ## Troubleshooting
 
-1. MPS not available:
-   - Ensure macOS 13.0+ is installed
-   - Check PyTorch version (2.0+ required)
-   - Verify Apple Silicon GPU is present
+1. Memory issues:
+   - Reduce batch size in `dataset.py`
+   - Enable gradient accumulation
+   - Monitor system resources with `monitor.py`
 
-2. Memory issues:
-   - Reduce batch size in dataset.py
-   - Close other GPU-intensive applications
-   - Monitor system memory usage
+2. Training issues:
+   - Check learning rate scheduling
+   - Verify data augmentation pipeline
+   - Monitor loss curves for instability
 
 ## Contributing
 
-Feel free to submit issues and enhancement requests!
+Contributions are welcome! Please feel free to submit issues and pull requests.
 
 ## License
 
