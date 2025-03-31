@@ -16,3 +16,5 @@ checkpoints/
 .vscode/
 
 data/
+
+.DS_Store
