@@ -1,0 +1,18 @@
+# Ignore virtual env
+venv/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore logs and checkpoints
+runs/
+checkpoints/
+*.tar.gz
+
+# VSCode settings (optional)
+.vscode/
+
+data/
