@@ -1,0 +1,11 @@
+{
+    "run_20250401_061704": {
+        "timestamp": "20250401_061704",
+        "name": "run_20250401_061704",
+        "path": "analysis_results/run_20250401_061704",
+        "metrics": {
+            "top1_accuracy": 77.41,
+            "top5_accuracy": 95.29
+        }
+    }
+}
