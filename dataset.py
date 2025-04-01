@@ -3,12 +3,27 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import os
+import random
+import numpy as np
+
+def set_seed(seed=42):
+    """Set random seeds for reproducibility"""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 class CIFAR100Dataset:
-    def __init__(self, batch_size=128, num_workers=4):
+    def __init__(self, batch_size=128, num_workers=4, seed=42):
         """Initialize CIFAR-100 dataset with transforms"""
         self.batch_size = batch_size
         self.num_workers = num_workers
+        set_seed(seed)  # Set random seed
+        
         print("Setting up data transforms...")
         # Define transforms
         self.train_transform = transforms.Compose([
@@ -65,12 +80,13 @@ class CIFAR100Dataset:
             num_workers=self.num_workers,
             pin_memory=True,
             persistent_workers=True,
-            prefetch_factor=2
+            prefetch_factor=2,
+            generator=torch.Generator().manual_seed(42)  # Set seed for shuffling
         )
         
         test_loader = DataLoader(
             test_dataset,
-            batch_size=self.batch_size * 2,  # Larger batch size for testing
+            batch_size=self.batch_size,  # Use same batch size for consistency
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,

@@ -10,7 +10,7 @@ import numpy as np
 import gc
 from torch.cuda.amp import autocast, GradScaler
 from model import EfficientNetModel
-from dataset import CIFAR100Dataset
+from dataset import CIFAR100Dataset, set_seed
 from monitor import SystemMonitor
 
 def clear_memory():
@@ -20,24 +20,24 @@ def clear_memory():
     gc.collect()
 
 class Trainer:
-    def __init__(self, model, train_loader, test_loader, learning_rate=0.001):
+    def __init__(self, model, train_loader, test_loader, learning_rate=0.001, gradient_accumulation_steps=4):
         """Initialize trainer"""
         self.model = model
         self.train_loader = train_loader
         self.test_loader = test_loader
         self.device = model.device
+        self.gradient_accumulation_steps = gradient_accumulation_steps
         
         # Loss and optimizer
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(model.get_model().parameters(), lr=learning_rate)
         
-        # Learning rate scheduler
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, 
-            mode='min', 
-            factor=0.1, 
-            patience=3, 
-            verbose=True
+        # Learning rate scheduler with cosine annealing
+        self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.optimizer,
+            T_0=5,  # Number of epochs for the first restart
+            T_mult=2,  # Factor to increase T_0 after a restart
+            eta_min=1e-6  # Minimum learning rate
         )
         
         # Mixed precision training
@@ -59,37 +59,34 @@ class Trainer:
         """Train for one epoch"""
         self.model.get_model().train()
         running_loss = 0.0
-        correct_top1 = 0
-        correct_top5 = 0
+        correct = 0
         total = 0
+        optimizer_steps = 0
         
-        for inputs, labels in tqdm(self.train_loader, desc='Training'):
+        for i, (inputs, labels) in enumerate(tqdm(self.train_loader, desc='Training')):
             # Move data to GPU with non_blocking=True
             inputs = inputs.to(self.device, non_blocking=True)
             labels = labels.to(self.device, non_blocking=True)
-            
-            self.optimizer.zero_grad()
             
             # Mixed precision training
             with autocast():
                 outputs = self.model.get_model()(inputs)
                 loss = self.criterion(outputs, labels)
+                loss = loss / self.gradient_accumulation_steps  # Normalize loss
             
             self.scaler.scale(loss).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
             
-            running_loss += loss.item()
+            # Gradient accumulation
+            if (i + 1) % self.gradient_accumulation_steps == 0:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.optimizer.zero_grad()
+                optimizer_steps += 1
             
-            # Calculate top-1 and top-5 accuracy
+            running_loss += loss.item() * self.gradient_accumulation_steps
             _, predicted = outputs.max(1)
-            correct_top1 += predicted.eq(labels).sum().item()
-            
-            # Calculate top-5 accuracy
-            _, predicted_top5 = outputs.topk(5, 1, True, True)
-            correct_top5 += predicted_top5.eq(labels.unsqueeze(1)).sum().item()
-            
             total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
             
             # Clear memory after each batch
             del outputs, loss
@@ -99,16 +96,14 @@ class Trainer:
             self.monitor.update_metrics()
         
         epoch_loss = running_loss / len(self.train_loader)
-        accuracy_top1 = 100. * correct_top1 / total
-        accuracy_top5 = 100. * correct_top5 / total
-        return epoch_loss, accuracy_top1, accuracy_top5
+        accuracy = 100. * correct / total
+        return epoch_loss, accuracy
     
     def evaluate(self):
         """Evaluate on test set"""
         self.model.get_model().eval()
         running_loss = 0.0
-        correct_top1 = 0
-        correct_top5 = 0
+        correct = 0
         total = 0
         
         with torch.no_grad():
@@ -121,16 +116,9 @@ class Trainer:
                 loss = self.criterion(outputs, labels)
                 
                 running_loss += loss.item()
-                
-                # Calculate top-1 and top-5 accuracy
                 _, predicted = outputs.max(1)
-                correct_top1 += predicted.eq(labels).sum().item()
-                
-                # Calculate top-5 accuracy
-                _, predicted_top5 = outputs.topk(5, 1, True, True)
-                correct_top5 += predicted_top5.eq(labels.unsqueeze(1)).sum().item()
-                
                 total += labels.size(0)
+                correct += predicted.eq(labels).sum().item()
                 
                 # Clear memory after each batch
                 del outputs, loss
@@ -140,11 +128,10 @@ class Trainer:
                 self.monitor.update_metrics()
         
         epoch_loss = running_loss / len(self.test_loader)
-        accuracy_top1 = 100. * correct_top1 / total
-        accuracy_top5 = 100. * correct_top5 / total
-        return epoch_loss, accuracy_top1, accuracy_top5
+        accuracy = 100. * correct / total
+        return epoch_loss, accuracy
     
-    def train(self, num_epochs=10, save_best=True):
+    def train(self, num_epochs=30, save_best=True):
         """Train the model"""
         best_accuracy = 0.0
         start_time = time.time()
@@ -153,40 +140,39 @@ class Trainer:
             print(f'\nEpoch {epoch+1}/{num_epochs}')
             
             # Train and evaluate
-            train_loss, train_acc_top1, train_acc_top5 = self.train_epoch()
-            test_loss, test_acc_top1, test_acc_top5 = self.evaluate()
+            train_loss, train_acc = self.train_epoch()
+            test_loss, test_acc = self.evaluate()
             
             # Update learning rate
-            self.scheduler.step(test_loss)
+            self.scheduler.step()
+            current_lr = self.optimizer.param_groups[0]['lr']
             
             # Log metrics
             self.train_losses.append(train_loss)
             self.test_losses.append(test_loss)
-            self.train_accuracies.append(train_acc_top1)
-            self.test_accuracies.append(test_acc_top1)
+            self.train_accuracies.append(train_acc)
+            self.test_accuracies.append(test_acc)
             
             # Tensorboard logging
             self.writer.add_scalar('Loss/train', train_loss, epoch)
             self.writer.add_scalar('Loss/test', test_loss, epoch)
-            self.writer.add_scalar('Accuracy/train_top1', train_acc_top1, epoch)
-            self.writer.add_scalar('Accuracy/train_top5', train_acc_top5, epoch)
-            self.writer.add_scalar('Accuracy/test_top1', test_acc_top1, epoch)
-            self.writer.add_scalar('Accuracy/test_top5', test_acc_top5, epoch)
-            self.writer.add_scalar('Learning_rate', self.optimizer.param_groups[0]['lr'], epoch)
+            self.writer.add_scalar('Accuracy/train', train_acc, epoch)
+            self.writer.add_scalar('Accuracy/test', test_acc, epoch)
+            self.writer.add_scalar('Learning_rate', current_lr, epoch)
             
-            print(f'Train Loss: {train_loss:.4f}, Train Acc (Top-1): {train_acc_top1:.2f}%, Train Acc (Top-5): {train_acc_top5:.2f}%')
-            print(f'Test Loss: {test_loss:.4f}, Test Acc (Top-1): {test_acc_top1:.2f}%, Test Acc (Top-5): {test_acc_top5:.2f}%')
-            print(f'Learning Rate: {self.optimizer.param_groups[0]["lr"]:.6f}')
+            print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%')
+            print(f'Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.2f}%')
+            print(f'Learning Rate: {current_lr:.6f}')
             
-            # Save best model based on top-1 accuracy
-            if save_best and test_acc_top1 > best_accuracy:
-                best_accuracy = test_acc_top1
+            # Save best model
+            if save_best and test_acc > best_accuracy:
+                best_accuracy = test_acc
                 self.model.save_checkpoint(
                     'checkpoints/best_model.pth',
                     epoch,
                     self.optimizer,
                     test_loss,
-                    test_acc_top1
+                    test_acc
                 )
             
             # Plot current metrics
@@ -201,6 +187,7 @@ class Trainer:
         # Print training time
         training_time = time.time() - start_time
         print(f'\nTraining completed in {training_time:.2f} seconds')
+        print(f'Best test accuracy: {best_accuracy:.2f}%')
         
         # Save final system metrics
         self.monitor.save_metrics()
@@ -220,8 +207,8 @@ class Trainer:
         
         # Plot accuracy
         plt.subplot(1, 2, 2)
-        plt.plot(self.train_accuracies, label='Train Accuracy (Top-1)')
-        plt.plot(self.test_accuracies, label='Test Accuracy (Top-1)')
+        plt.plot(self.train_accuracies, label='Train Accuracy')
+        plt.plot(self.test_accuracies, label='Test Accuracy')
         plt.title('Accuracy over epochs')
         plt.xlabel('Epoch')
         plt.ylabel('Accuracy (%)')
@@ -237,6 +224,9 @@ class Trainer:
         clear_memory()
 
 def main():
+    # Set random seeds for reproducibility
+    set_seed(42)
+    
     # Clear memory at start
     clear_memory()
     
@@ -256,13 +246,14 @@ def main():
     dataset = CIFAR100Dataset(batch_size=128, num_workers=4)
     train_loader, test_loader = dataset.get_data_loaders()
 
-    # Initialize trainer
+    # Initialize trainer with gradient accumulation
     print("\nSetting up trainer...")
     trainer = Trainer(
         model=model,
         train_loader=train_loader,
         test_loader=test_loader,
-        learning_rate=0.001
+        learning_rate=0.001,
+        gradient_accumulation_steps=4  # Effective batch size will be 128 * 4 = 512
     )
 
     # Train the model
@@ -270,7 +261,8 @@ def main():
     print(f"Training on device: {model.device}")
     print(f"Number of training batches: {len(train_loader)}")
     print(f"Number of test batches: {len(test_loader)}")
-    trainer.train(num_epochs=10, save_best=True)
+    print(f"Effective batch size: {128 * 4}")  # Actual batch size * gradient accumulation steps
+    trainer.train(num_epochs=30, save_best=True)  # Increased epochs to 30
 
     print("\nTraining completed! Check the following:")
     print("- Training metrics plot: training_metrics.png")
