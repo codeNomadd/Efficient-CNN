@@ -1,0 +1,5 @@
+Metric,Value
+Model Name,EfficientNet-B0
+Total Parameters,"4,135,648"
+Trainable Parameters,"4,135,648"
+Test Accuracy,77.41%
