@@ -243,7 +243,7 @@ def main():
 
     # Initialize dataset with optimized parameters
     print("\nLoading CIFAR-100 dataset...")
-    dataset = CIFAR100Dataset(batch_size=128, num_workers=4)
+    dataset = CIFAR100Dataset(batch_size=256, num_workers=8)  # Increased batch size and workers
     train_loader, test_loader = dataset.get_data_loaders()
 
     # Initialize trainer with gradient accumulation
@@ -253,7 +253,7 @@ def main():
         train_loader=train_loader,
         test_loader=test_loader,
         learning_rate=0.001,
-        gradient_accumulation_steps=4  # Effective batch size will be 128 * 4 = 512
+        gradient_accumulation_steps=2  # Reduced since we increased batch size
     )
 
     # Train the model
@@ -261,7 +261,7 @@ def main():
     print(f"Training on device: {model.device}")
     print(f"Number of training batches: {len(train_loader)}")
     print(f"Number of test batches: {len(test_loader)}")
-    print(f"Effective batch size: {128 * 4}")  # Actual batch size * gradient accumulation steps
+    print(f"Effective batch size: {256 * 2}")  # Actual batch size * gradient accumulation steps
     trainer.train(num_epochs=30, save_best=True)  # Increased epochs to 30
 
     print("\nTraining completed! Check the following:")
