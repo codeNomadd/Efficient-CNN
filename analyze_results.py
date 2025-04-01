@@ -11,9 +11,88 @@ import torchvision
 from model import EfficientNetModel
 from dataset import CIFAR100Dataset
 from tqdm import tqdm
+import datetime
+import json
+import shutil
+
+class RunManager:
+    def __init__(self, base_dir='analysis_results'):
+        """Initialize the run manager"""
+        self.base_dir = Path(base_dir)
+        self.base_dir.mkdir(exist_ok=True)
+        self.runs_file = self.base_dir / 'runs_history.json'
+        self.load_runs_history()
+    
+    def load_runs_history(self):
+        """Load the history of all runs"""
+        if self.runs_file.exists():
+            with open(self.runs_file, 'r') as f:
+                self.runs_history = json.load(f)
+        else:
+            self.runs_history = {}
+    
+    def save_runs_history(self):
+        """Save the history of all runs"""
+        with open(self.runs_file, 'w') as f:
+            json.dump(self.runs_history, f, indent=4)
+    
+    def create_new_run(self, run_name=None):
+        """Create a new run directory with timestamp"""
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        if run_name is None:
+            run_name = f"run_{timestamp}"
+        
+        run_dir = self.base_dir / run_name
+        run_dir.mkdir(exist_ok=True)
+        
+        # Initialize run info
+        run_info = {
+            'timestamp': timestamp,
+            'name': run_name,
+            'path': str(run_dir),
+            'metrics': {}
+        }
+        
+        # Update history
+        self.runs_history[run_name] = run_info
+        self.save_runs_history()
+        
+        return run_dir, run_info
+    
+    def update_run_metrics(self, run_name, metrics):
+        """Update metrics for a specific run"""
+        if run_name in self.runs_history:
+            self.runs_history[run_name]['metrics'].update(metrics)
+            self.save_runs_history()
+    
+    def get_all_runs(self):
+        """Get list of all runs"""
+        return list(self.runs_history.keys())
+    
+    def plot_comparative_metrics(self, metric_name):
+        """Plot a specific metric across all runs"""
+        runs = []
+        values = []
+        
+        for run_name, run_info in self.runs_history.items():
+            if metric_name in run_info['metrics']:
+                runs.append(run_name)
+                values.append(run_info['metrics'][metric_name])
+        
+        if runs:
+            plt.figure(figsize=(10, 6))
+            plt.bar(runs, values)
+            plt.title(f'Comparison of {metric_name} across runs')
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            
+            save_path = self.base_dir / f'comparative_{metric_name}.png'
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"Comparative plot saved to: {save_path}")
 
 class ModelAnalyzer:
-    def __init__(self, model_path='checkpoints/best_model.pth', logs_dir='runs/efficientnet_cifar100'):
+    def __init__(self, model_path='checkpoints/best_model.pth', logs_dir='runs/efficientnet_cifar100', run_name=None):
         """Initialize the analyzer with model and data"""
         print("\nInitializing ModelAnalyzer...")
         print(f"Using device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
@@ -27,11 +106,10 @@ class ModelAnalyzer:
         _, self.test_loader = self.dataset.get_data_loaders()
         self.class_names = self.dataset.classes
         
-        print(f"Setting up directories...")
-        self.logs_dir = Path(logs_dir)
-        self.output_dir = Path('analysis_results')
-        self.output_dir.mkdir(exist_ok=True)
-        print(f"Results will be saved in: {self.output_dir}/")
+        # Initialize run manager
+        self.run_manager = RunManager()
+        self.run_dir, self.run_info = self.run_manager.create_new_run(run_name)
+        print(f"Results will be saved in: {self.run_dir}/")
         
     def _load_model(self, model_path):
         """Load the trained model"""
@@ -46,7 +124,7 @@ class ModelAnalyzer:
         print("\nPlotting training history...")
         try:
             from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-            event_acc = EventAccumulator(str(self.logs_dir))
+            event_acc = EventAccumulator(str(self.run_dir))
             event_acc.Reload()
             
             # Extract scalars
@@ -78,7 +156,7 @@ class ModelAnalyzer:
             ax2.grid(True)
             
             plt.tight_layout()
-            save_path = self.output_dir / 'training_history.png'
+            save_path = self.run_dir / 'training_history.png'
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()
             print(f"Training history plot saved to: {save_path}")
@@ -112,7 +190,7 @@ class ModelAnalyzer:
         plt.title('Raw Confusion Matrix')
         plt.xlabel('Predicted')
         plt.ylabel('True')
-        save_path = self.output_dir / 'confusion_matrix_raw.png'
+        save_path = self.run_dir / 'confusion_matrix_raw.png'
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Raw confusion matrix saved to: {save_path}")
@@ -123,7 +201,7 @@ class ModelAnalyzer:
         plt.title('Normalized Confusion Matrix')
         plt.xlabel('Predicted')
         plt.ylabel('True')
-        save_path = self.output_dir / 'confusion_matrix_normalized.png'
+        save_path = self.run_dir / 'confusion_matrix_normalized.png'
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Normalized confusion matrix saved to: {save_path}")
@@ -148,7 +226,7 @@ class ModelAnalyzer:
         df = df.sort_values('Accuracy', ascending=False)
         
         # Save to CSV
-        save_path = self.output_dir / 'class_accuracies.csv'
+        save_path = self.run_dir / 'class_accuracies.csv'
         df.to_csv(save_path, index=False)
         print(f"Class accuracies saved to: {save_path}")
         
@@ -166,7 +244,7 @@ class ModelAnalyzer:
         ax2.set_xticklabels(ax2.get_xticklabels(), rotation=45, ha='right')
         
         plt.tight_layout()
-        save_path = self.output_dir / 'class_accuracies.png'
+        save_path = self.run_dir / 'class_accuracies.png'
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Class accuracies plot saved to: {save_path}")
@@ -199,7 +277,7 @@ class ModelAnalyzer:
         plt.xlabel('Number of Confusions')
         
         plt.tight_layout()
-        save_path = self.output_dir / 'confused_pairs.png'
+        save_path = self.run_dir / 'confused_pairs.png'
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Confused pairs plot saved to: {save_path}")
@@ -210,7 +288,7 @@ class ModelAnalyzer:
             'Predicted Class': [self.class_names[j] for _,j,_ in top_10_pairs],
             'Count': counts
         })
-        save_path = self.output_dir / 'confused_pairs.csv'
+        save_path = self.run_dir / 'confused_pairs.csv'
         df.to_csv(save_path, index=False)
         print(f"Confused pairs data saved to: {save_path}")
         
@@ -259,7 +337,7 @@ class ModelAnalyzer:
             axes[idx].set_title(f'True: {true_label}\nPred: {pred_label}', fontsize=8)
         
         plt.tight_layout()
-        save_path = self.output_dir / 'misclassified_samples.png'
+        save_path = self.run_dir / 'misclassified_samples.png'
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Misclassified samples visualization saved to: {save_path}")
@@ -293,7 +371,7 @@ class ModelAnalyzer:
         })
         
         # Save to CSV
-        save_path = self.output_dir / 'model_summary.csv'
+        save_path = self.run_dir / 'model_summary.csv'
         summary.to_csv(save_path, index=False)
         print(f"Model summary saved to: {save_path}")
         
@@ -334,9 +412,15 @@ class ModelAnalyzer:
             'Metric': ['Top-1 Accuracy', 'Top-5 Accuracy'],
             'Value': [f"{top1_accuracy:.2f}%", f"{top5_accuracy:.2f}%"]
         })
-        save_path = self.output_dir / 'accuracies.csv'
+        save_path = self.run_dir / 'accuracies.csv'
         df.to_csv(save_path, index=False)
         print(f"Accuracies saved to: {save_path}")
+        
+        # Update run metrics
+        self.run_manager.update_run_metrics(self.run_info['name'], {
+            'top1_accuracy': top1_accuracy,
+            'top5_accuracy': top5_accuracy
+        })
         
         return top1_accuracy, top5_accuracy
 
@@ -374,7 +458,13 @@ def main():
     print("\nModel Summary:")
     print(summary.to_string(index=False))
     
-    print("\nAnalysis complete! Results saved in 'analysis_results' directory.")
+    # Generate comparative plots
+    print("\n7. Generating comparative plots...")
+    analyzer.run_manager.plot_comparative_metrics('top1_accuracy')
+    analyzer.run_manager.plot_comparative_metrics('top5_accuracy')
+    
+    print(f"\nAnalysis complete! Results saved in '{analyzer.run_dir}' directory.")
+    print("You can find the comparative plots in the 'analysis_results' directory.")
 
 if __name__ == '__main__':
     main() 
