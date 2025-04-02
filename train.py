@@ -12,6 +12,7 @@ from torch.cuda.amp import autocast, GradScaler
 from model import EfficientNetModel
 from dataset import CIFAR100Dataset, set_seed
 from monitor import SystemMonitor
+from pathlib import Path
 
 def clear_memory():
     """Clear GPU memory and cache"""
@@ -223,6 +224,165 @@ class Trainer:
         plt.close('all')
         clear_memory()
 
+class DynamicLRScheduler:
+    def __init__(self, optimizer, initial_lr=0.001, min_lr=1e-6, patience=3, window_size=3):
+        self.optimizer = optimizer
+        self.initial_lr = initial_lr
+        self.min_lr = min_lr
+        self.patience = patience
+        self.window_size = window_size
+        self.loss_history = []
+        self.lr_history = []
+        
+    def step(self, val_loss):
+        self.loss_history.append(val_loss)
+        if len(self.loss_history) > self.window_size:
+            self.loss_history.pop(0)
+        
+        if len(self.loss_history) < self.window_size:
+            return
+        
+        # Calculate loss change rate
+        loss_changes = [self.loss_history[i] - self.loss_history[i-1] for i in range(1, len(self.loss_history))]
+        avg_loss_change = sum(loss_changes) / len(loss_changes)
+        
+        # Calculate loss volatility
+        loss_std = np.std(self.loss_history)
+        
+        # Dynamic learning rate adjustment
+        current_lr = self.optimizer.param_groups[0]['lr']
+        
+        if avg_loss_change > 0:  # Loss is increasing
+            # More aggressive reduction when loss is increasing and volatile
+            reduction_factor = 1 - (0.1 * (1 + loss_std))
+        else:  # Loss is decreasing
+            # Smaller reduction when loss is decreasing
+            reduction_factor = 1 - (0.05 * (1 - loss_std))
+        
+        # Ensure reduction factor is between 0.5 and 0.95
+        reduction_factor = max(0.5, min(0.95, reduction_factor))
+        
+        # Apply learning rate update
+        new_lr = current_lr * reduction_factor
+        new_lr = max(self.min_lr, new_lr)
+        
+        # Update learning rate
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = new_lr
+        
+        self.lr_history.append(new_lr)
+        
+        # Print adjustment info
+        print(f"\nLearning Rate Adjustment:")
+        print(f"Average Loss Change: {avg_loss_change:.4f}")
+        print(f"Loss Volatility: {loss_std:.4f}")
+        print(f"Reduction Factor: {reduction_factor:.4f}")
+        print(f"Old LR: {current_lr:.6f}")
+        print(f"New LR: {new_lr:.6f}")
+
+def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device, writer, checkpoint_dir):
+    """Train the model with dynamic learning rate scheduling based on loss changes"""
+    best_val_loss = float('inf')
+    best_model_path = checkpoint_dir / 'best_model.pth'
+    patience = 3  # Reduced from 5 to 3 epochs
+    patience_counter = 0
+    
+    for epoch in range(num_epochs):
+        # Training phase
+        model.train()
+        train_loss = 0.0
+        train_correct = 0
+        train_total = 0
+        
+        print(f"\nEpoch {epoch+1}/{num_epochs}")
+        print("Training...")
+        for images, labels in tqdm(train_loader):
+            images, labels = images.to(device), labels.to(device)
+            
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item()
+            _, predicted = outputs.max(1)
+            train_total += labels.size(0)
+            train_correct += predicted.eq(labels).sum().item()
+        
+        train_loss = train_loss / len(train_loader)
+        train_acc = 100. * train_correct / train_total
+        
+        # Validation phase
+        model.eval()
+        val_loss = 0.0
+        val_correct = 0
+        val_total = 0
+        
+        print("Validating...")
+        with torch.no_grad():
+            for images, labels in tqdm(val_loader):
+                images, labels = images.to(device), labels.to(device)
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+                
+                val_loss += loss.item()
+                _, predicted = outputs.max(1)
+                val_total += labels.size(0)
+                val_correct += predicted.eq(labels).sum().item()
+        
+        val_loss = val_loss / len(val_loader)
+        val_acc = 100. * val_correct / val_total
+        
+        # Update learning rate based on validation loss
+        scheduler.step(val_loss)
+        current_lr = optimizer.param_groups[0]['lr']
+        
+        # Log metrics
+        writer.add_scalar('Loss/train', train_loss, epoch)
+        writer.add_scalar('Loss/test', val_loss, epoch)
+        writer.add_scalar('Accuracy/train', train_acc, epoch)
+        writer.add_scalar('Accuracy/test', val_acc, epoch)
+        writer.add_scalar('Learning_rate', current_lr, epoch)
+        
+        print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
+        print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
+        print(f"Learning Rate: {current_lr:.6f}")
+        
+        # Save best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            patience_counter = 0
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.get_model().state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'train_loss': train_loss,
+                'val_loss': val_loss,
+                'train_acc': train_acc,
+                'val_acc': val_acc,
+            }, best_model_path)
+            print(f"Saved best model with validation loss: {val_loss:.4f}")
+        else:
+            patience_counter += 1
+            print(f"Validation loss did not improve. Patience counter: {patience_counter}/{patience}")
+        
+        # Save checkpoint every 5 epochs
+        if (epoch + 1) % 5 == 0:
+            checkpoint_path = checkpoint_dir / f'checkpoint_epoch_{epoch+1}.pth'
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.get_model().state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'train_loss': train_loss,
+                'val_loss': val_loss,
+                'train_acc': train_acc,
+                'val_acc': val_acc,
+            }, checkpoint_path)
+            print(f"Saved checkpoint at epoch {epoch+1}")
+
 def main():
     # Set random seeds for reproducibility
     set_seed(42)
@@ -243,35 +403,39 @@ def main():
 
     # Initialize dataset with optimized parameters
     print("\nLoading CIFAR-100 dataset...")
-    dataset = CIFAR100Dataset(batch_size=192, num_workers=6)  # Balanced batch size and workers
+    dataset = CIFAR100Dataset(batch_size=192, num_workers=6)
     train_loader, test_loader = dataset.get_data_loaders()
 
-    # Initialize trainer with gradient accumulation
-    print("\nSetting up trainer...")
-    trainer = Trainer(
-        model=model,
-        train_loader=train_loader,
-        test_loader=test_loader,
-        learning_rate=0.001,
-        gradient_accumulation_steps=3  # Balanced for effective batch size
+    # Initialize optimizer and scheduler
+    optimizer = optim.Adam(model.get_model().parameters(), lr=0.001)
+    scheduler = DynamicLRScheduler(
+        optimizer,
+        initial_lr=0.001,
+        min_lr=1e-6,
+        patience=3,
+        window_size=3
     )
 
+    # Initialize TensorBoard writer
+    writer = SummaryWriter('runs/efficientnet_cifar100')
+    
     # Train the model
     print("\nStarting training...")
-    print(f"Training on device: {model.device}")
-    print(f"Number of training batches: {len(train_loader)}")
-    print(f"Number of test batches: {len(test_loader)}")
-    print(f"Effective batch size: {192 * 3}")  # Actual batch size * gradient accumulation steps
-    trainer.train(num_epochs=30, save_best=True)  # Increased epochs to 30
-
-    print("\nTraining completed! Check the following:")
-    print("- Training metrics plot: training_metrics.png")
-    print("- Best model checkpoint: checkpoints/best_model.pth")
-    print("- Tensorboard logs: runs/efficientnet_cifar100/")
-    print("- System metrics log: logs/system_metrics.txt")
+    train_model(
+        model=model,
+        train_loader=train_loader,
+        val_loader=test_loader,
+        criterion=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        scheduler=scheduler,
+        num_epochs=30,
+        device=model.device,
+        writer=writer,
+        checkpoint_dir=Path('checkpoints')
+    )
     
-    # Final memory cleanup
-    clear_memory()
+    writer.close()
+    print("\nTraining completed!")
 
 if __name__ == "__main__":
     main() 
