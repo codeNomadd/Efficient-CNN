@@ -284,8 +284,9 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
     """Train the model with dynamic learning rate scheduling based on loss changes"""
     best_val_loss = float('inf')
     best_model_path = checkpoint_dir / 'best_model.pth'
-    patience = 3  # Reduced from 5 to 3 epochs
+    patience = 3
     patience_counter = 0
+    gradient_accumulation_steps = 4  # Accumulate gradients over 4 steps
     
     for epoch in range(num_epochs):
         # Training phase
@@ -293,22 +294,40 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
         train_loss = 0.0
         train_correct = 0
         train_total = 0
+        optimizer.zero_grad()  # Zero gradients at start of epoch
         
         print(f"\nEpoch {epoch+1}/{num_epochs}")
         print("Training...")
-        for images, labels in tqdm(train_loader):
+        for i, (images, labels) in enumerate(tqdm(train_loader)):
             images, labels = images.to(device), labels.to(device)
             
-            optimizer.zero_grad()
+            # Forward pass
             outputs = model.get_model()(images)
             loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            loss = loss / gradient_accumulation_steps  # Normalize loss
             
-            train_loss += loss.item()
+            # Backward pass
+            loss.backward()
+            
+            # Gradient accumulation
+            if (i + 1) % gradient_accumulation_steps == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+            
+            train_loss += loss.item() * gradient_accumulation_steps
             _, predicted = outputs.max(1)
             train_total += labels.size(0)
             train_correct += predicted.eq(labels).sum().item()
+            
+            # Clear memory after each batch
+            del outputs, loss
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        
+        # Handle remaining gradients
+        if (i + 1) % gradient_accumulation_steps != 0:
+            optimizer.step()
+            optimizer.zero_grad()
         
         train_loss = train_loss / len(train_loader)
         train_acc = 100. * train_correct / train_total
@@ -330,6 +349,11 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
                 _, predicted = outputs.max(1)
                 val_total += labels.size(0)
                 val_correct += predicted.eq(labels).sum().item()
+                
+                # Clear memory after each batch
+                del outputs, loss
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
         
         val_loss = val_loss / len(val_loader)
         val_acc = 100. * val_correct / val_total
@@ -401,9 +425,9 @@ def main():
     model = EfficientNetModel()
     print(f"Model initialized on device: {model.device}")
 
-    # Initialize dataset with optimized parameters
+    # Initialize dataset with smaller batch size
     print("\nLoading CIFAR-100 dataset...")
-    dataset = CIFAR100Dataset(batch_size=192, num_workers=6)
+    dataset = CIFAR100Dataset(batch_size=64, num_workers=4)  # Reduced batch size and workers
     train_loader, test_loader = dataset.get_data_loaders()
 
     # Initialize optimizer and scheduler
