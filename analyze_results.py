@@ -80,10 +80,30 @@ class RunManager:
                 values.append(run_info['metrics'][metric_name])
         
         if runs:
-            plt.figure(figsize=(10, 6))
-            plt.bar(runs, values)
-            plt.title(f'Comparison of {metric_name} across runs')
-            plt.xticks(rotation=45)
+            plt.figure(figsize=(12, 6))
+            
+            # Plot line chart
+            plt.plot(runs, values, marker='o', linewidth=2, markersize=8)
+            
+            # Customize the plot
+            plt.title(f'Comparison of {metric_name} across runs', fontsize=14, pad=20)
+            plt.xlabel('Training Run', fontsize=12)
+            plt.ylabel('Accuracy (%)', fontsize=12)
+            
+            # Set y-axis limits and ticks
+            plt.ylim(70, 100)  # Set minimum to 70%
+            plt.grid(True, linestyle='--', alpha=0.7)
+            
+            # Add value labels on points
+            for i, v in enumerate(values):
+                plt.text(i, v, f'{v:.1f}%', ha='center', va='bottom')
+            
+            # Rotate x-axis labels for better readability
+            plt.xticks(rotation=45, ha='right')
+            
+            # Add horizontal grid lines at every 5%
+            plt.yticks(np.arange(70, 101, 5))
+            
             plt.tight_layout()
             
             save_path = self.base_dir / f'comparative_{metric_name}.png'
@@ -134,28 +154,38 @@ class ModelAnalyzer:
             train_loss = pd.DataFrame(event_acc.Scalars('Loss/train'))
             test_loss = pd.DataFrame(event_acc.Scalars('Loss/test'))
             
-            # Create figure
+            # Create figure with two subplots
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
             
             # Plot accuracy
-            ax1.plot(train_acc.step, train_acc.value, label='Train')
-            ax1.plot(test_acc.step, test_acc.value, label='Validation')
-            ax1.set_title('Training vs Validation Accuracy')
-            ax1.set_xlabel('Epoch')
-            ax1.set_ylabel('Accuracy (%)')
-            ax1.legend()
-            ax1.grid(True)
+            ax1.plot(train_acc.step, train_acc.value, label='Train', linewidth=2, marker='o')
+            ax1.plot(test_acc.step, test_acc.value, label='Validation', linewidth=2, marker='o')
+            ax1.set_title('Training vs Validation Accuracy', fontsize=14, pad=20)
+            ax1.set_xlabel('Epoch', fontsize=12)
+            ax1.set_ylabel('Accuracy (%)', fontsize=12)
+            ax1.legend(fontsize=10)
+            ax1.grid(True, linestyle='--', alpha=0.7)
+            ax1.set_ylim(70, 100)  # Set y-axis limits for accuracy
+            ax1.set_yticks(np.arange(70, 101, 5))  # Set y-axis ticks every 5%
             
             # Plot loss
-            ax2.plot(train_loss.step, train_loss.value, label='Train')
-            ax2.plot(test_loss.step, test_loss.value, label='Validation')
-            ax2.set_title('Training vs Validation Loss')
-            ax2.set_xlabel('Epoch')
-            ax2.set_ylabel('Loss')
-            ax2.legend()
-            ax2.grid(True)
+            ax2.plot(train_loss.step, train_loss.value, label='Train', linewidth=2, marker='o')
+            ax2.plot(test_loss.step, test_loss.value, label='Validation', linewidth=2, marker='o')
+            ax2.set_title('Training vs Validation Loss', fontsize=14, pad=20)
+            ax2.set_xlabel('Epoch', fontsize=12)
+            ax2.set_ylabel('Loss', fontsize=12)
+            ax2.legend(fontsize=10)
+            ax2.grid(True, linestyle='--', alpha=0.7)
+            
+            # Add value labels on points for both plots
+            for ax, train_data, test_data in [(ax1, train_acc, test_acc), (ax2, train_loss, test_loss)]:
+                for i, (train_val, test_val) in enumerate(zip(train_data.value, test_data.value)):
+                    ax.text(i, train_val, f'{train_val:.2f}', ha='center', va='bottom')
+                    ax.text(i, test_val, f'{test_val:.2f}', ha='center', va='top')
             
             plt.tight_layout()
+            
+            # Save the figure
             save_path = self.run_dir / 'training_history.png'
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()
@@ -423,6 +453,79 @@ class ModelAnalyzer:
         })
         
         return top1_accuracy, top5_accuracy
+    
+    def visualize_model_architecture(self):
+        """Create a visualization of the model architecture"""
+        print("\nGenerating model architecture visualization...")
+        
+        # Get model structure
+        model = self.model.get_model()
+        
+        # Create architecture summary
+        architecture_data = []
+        total_params = 0
+        
+        for name, module in model.named_modules():
+            if isinstance(module, (nn.Conv2d, nn.Linear, nn.BatchNorm2d, nn.Dropout)):
+                params = sum(p.numel() for p in module.parameters())
+                total_params += params
+                
+                # Format layer name
+                layer_name = name.replace('_', ' ').title()
+                
+                # Get layer details
+                if isinstance(module, nn.Conv2d):
+                    details = f"Conv2d({module.in_channels}, {module.out_channels}, kernel={module.kernel_size})"
+                elif isinstance(module, nn.Linear):
+                    details = f"Linear({module.in_features}, {module.out_features})"
+                elif isinstance(module, nn.BatchNorm2d):
+                    details = f"BatchNorm2d({module.num_features})"
+                elif isinstance(module, nn.Dropout):
+                    details = f"Dropout(p={module.p})"
+                
+                architecture_data.append({
+                    'Layer': layer_name,
+                    'Type': module.__class__.__name__,
+                    'Details': details,
+                    'Parameters': f"{params:,}"
+                })
+        
+        # Create DataFrame
+        df = pd.DataFrame(architecture_data)
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(15, len(architecture_data) * 0.5))
+        ax.axis('tight')
+        ax.axis('off')
+        
+        # Create table
+        table = ax.table(
+            cellText=df.values,
+            colLabels=df.columns,
+            cellLoc='left',
+            loc='center',
+            colWidths=[0.2, 0.2, 0.4, 0.2]
+        )
+        
+        # Adjust table style
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1.2, 1.5)
+        
+        # Add title
+        plt.title('EfficientNet-B0 Architecture', pad=20, fontsize=14)
+        
+        # Add total parameters
+        plt.figtext(0.5, 0.02, f'Total Parameters: {total_params:,}', 
+                   ha='center', fontsize=10)
+        
+        # Save the figure
+        save_path = self.run_dir / 'model_architecture.png'
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Model architecture visualization saved to: {save_path}")
+        
+        return df
 
 def main():
     """Run all analyses"""
@@ -458,8 +561,13 @@ def main():
     print("\nModel Summary:")
     print(summary.to_string(index=False))
     
+    print("\n7. Visualizing model architecture...")
+    architecture = analyzer.visualize_model_architecture()
+    print("\nModel Architecture:")
+    print(architecture.to_string(index=False))
+    
     # Generate comparative plots
-    print("\n7. Generating comparative plots...")
+    print("\n8. Generating comparative plots...")
     analyzer.run_manager.plot_comparative_metrics('top1_accuracy')
     analyzer.run_manager.plot_comparative_metrics('top5_accuracy')
     
