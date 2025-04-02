@@ -86,7 +86,7 @@ class RunManager:
             plt.plot(runs, values, marker='o', linewidth=2, markersize=8)
             
             # Customize the plot
-            plt.title(f'Comparison of {metric_name} across runs', fontsize=14, pad=20)
+            plt.title(f'Comparison of Top-1 Accuracy across runs', fontsize=14, pad=20)
             plt.xlabel('Training Run', fontsize=12)
             plt.ylabel('Accuracy (%)', fontsize=12)
             
@@ -527,6 +527,76 @@ class ModelAnalyzer:
         
         return df
 
+    def compute_confusion_matrix_metrics(self):
+        """Compute and visualize confusion matrix metrics"""
+        print("\nComputing confusion matrix metrics...")
+        cm, _ = self.compute_confusion_matrix()
+        
+        # Calculate metrics
+        total = np.sum(cm)
+        true_positives = np.diag(cm)
+        false_positives = np.sum(cm, axis=0) - true_positives
+        false_negatives = np.sum(cm, axis=1) - true_positives
+        true_negatives = total - true_positives - false_positives - false_negatives
+        
+        # Calculate accuracies
+        accuracy = (true_positives + true_negatives) / total
+        precision = true_positives / (true_positives + false_positives)
+        recall = true_positives / (true_positives + false_negatives)
+        f1_score = 2 * (precision * recall) / (precision + recall)
+        
+        # Create metrics DataFrame
+        metrics_data = []
+        for i in range(len(self.class_names)):
+            metrics_data.append({
+                'Class': self.class_names[i],
+                'True Positives': true_positives[i],
+                'False Positives': false_positives[i],
+                'True Negatives': true_negatives[i],
+                'False Negatives': false_negatives[i],
+                'Accuracy': f"{accuracy[i]*100:.2f}%",
+                'Precision': f"{precision[i]*100:.2f}%",
+                'Recall': f"{recall[i]*100:.2f}%",
+                'F1 Score': f"{f1_score[i]*100:.2f}%"
+            })
+        
+        df = pd.DataFrame(metrics_data)
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(15, len(metrics_data) * 0.5))
+        ax.axis('tight')
+        ax.axis('off')
+        
+        # Create table
+        table = ax.table(
+            cellText=df.values,
+            colLabels=df.columns,
+            cellLoc='left',
+            loc='center',
+            colWidths=[0.15, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+        )
+        
+        # Adjust table style
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1.2, 1.5)
+        
+        # Add title
+        plt.title('Confusion Matrix Metrics by Class', pad=20, fontsize=14)
+        
+        # Save the figure
+        save_path = self.run_dir / 'confusion_matrix_metrics.png'
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Confusion matrix metrics visualization saved to: {save_path}")
+        
+        # Save to CSV
+        csv_path = self.run_dir / 'confusion_matrix_metrics.csv'
+        df.to_csv(csv_path, index=False)
+        print(f"Confusion matrix metrics saved to: {csv_path}")
+        
+        return df
+
 def main():
     """Run all analyses"""
     print("Starting model analysis...")
@@ -541,35 +611,39 @@ def main():
     print("\n2. Computing confusion matrices...")
     analyzer.compute_confusion_matrix()
     
-    print("\n3. Computing class-wise accuracies...")
+    print("\n3. Computing confusion matrix metrics...")
+    confusion_metrics = analyzer.compute_confusion_matrix_metrics()
+    print("\nConfusion Matrix Metrics:")
+    print(confusion_metrics.to_string(index=False))
+    
+    print("\n4. Computing class-wise accuracies...")
     class_accuracies = analyzer.compute_class_accuracies()
     print("\nTop 5 classes:")
     print(class_accuracies.head())
     print("\nBottom 5 classes:")
     print(class_accuracies.tail())
     
-    print("\n4. Finding most confused class pairs...")
+    print("\n5. Finding most confused class pairs...")
     confused_pairs = analyzer.find_most_confused_pairs()
     print("\nTop 5 confused pairs:")
     print(confused_pairs.head())
     
-    print("\n5. Visualizing misclassified samples...")
+    print("\n6. Visualizing misclassified samples...")
     analyzer.visualize_misclassified()
     
-    print("\n6. Generating model summary...")
+    print("\n7. Generating model summary...")
     summary = analyzer.summarize_model()
     print("\nModel Summary:")
     print(summary.to_string(index=False))
     
-    print("\n7. Visualizing model architecture...")
+    print("\n8. Visualizing model architecture...")
     architecture = analyzer.visualize_model_architecture()
     print("\nModel Architecture:")
     print(architecture.to_string(index=False))
     
     # Generate comparative plots
-    print("\n8. Generating comparative plots...")
+    print("\n9. Generating comparative plots...")
     analyzer.run_manager.plot_comparative_metrics('top1_accuracy')
-    analyzer.run_manager.plot_comparative_metrics('top5_accuracy')
     
     print(f"\nAnalysis complete! Results saved in '{analyzer.run_dir}' directory.")
     print("You can find the comparative plots in the 'analysis_results' directory.")
