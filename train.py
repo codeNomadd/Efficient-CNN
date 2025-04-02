@@ -289,7 +289,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
     
     for epoch in range(num_epochs):
         # Training phase
-        model.train()
+        model.get_model().train()
         train_loss = 0.0
         train_correct = 0
         train_total = 0
@@ -300,7 +300,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
             images, labels = images.to(device), labels.to(device)
             
             optimizer.zero_grad()
-            outputs = model(images)
+            outputs = model.get_model()(images)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
@@ -314,7 +314,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
         train_acc = 100. * train_correct / train_total
         
         # Validation phase
-        model.eval()
+        model.get_model().eval()
         val_loss = 0.0
         val_correct = 0
         val_total = 0
@@ -323,7 +323,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
         with torch.no_grad():
             for images, labels in tqdm(val_loader):
                 images, labels = images.to(device), labels.to(device)
-                outputs = model(images)
+                outputs = model.get_model()(images)
                 loss = criterion(outputs, labels)
                 
                 val_loss += loss.item()
