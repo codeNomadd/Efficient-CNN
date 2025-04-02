@@ -7,5 +7,14 @@
             "top1_accuracy": 77.41,
             "top5_accuracy": 95.29
         }
+    },
+    "run_20250402_044919": {
+        "timestamp": "20250402_044919",
+        "name": "run_20250402_044919",
+        "path": "analysis_results/run_20250402_044919",
+        "metrics": {
+            "top1_accuracy": 86.3,
+            "top5_accuracy": 97.92
+        }
     }
 }
