@@ -214,58 +214,69 @@ class ModelAnalyzer:
             fig = plt.figure(figsize=(20, 15))
             gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
             
+            def process_metric_data(tag):
+                """Process metric data to get epoch-wise values"""
+                data = pd.DataFrame(event_acc.Scalars(tag))
+                # Group by epoch (step) and take the last value for each epoch
+                epoch_data = data.groupby(data.step).last().reset_index()
+                return epoch_data
+            
             # Plot accuracy if available
             if 'Accuracy/train' in tags and 'Accuracy/test' in tags:
                 ax1 = fig.add_subplot(gs[0, 0])
-                train_acc = pd.DataFrame(event_acc.Scalars('Accuracy/train'))
-                test_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test'))
+                train_acc = process_metric_data('Accuracy/train')
+                test_acc = process_metric_data('Accuracy/test')
                 
-                ax1.plot(train_acc.step, train_acc.value, label='Training Accuracy', color='blue', linewidth=2)
-                ax1.plot(test_acc.step, test_acc.value, label='Test Accuracy', color='red', linewidth=2)
+                ax1.plot(train_acc.step, train_acc.value, 'b-', label='Training Accuracy', linewidth=2, marker='o')
+                ax1.plot(test_acc.step, test_acc.value, 'r-', label='Test Accuracy', linewidth=2, marker='o')
                 ax1.set_title('Training and Test Accuracy', fontsize=14, pad=20)
                 ax1.set_xlabel('Epoch', fontsize=12)
                 ax1.set_ylabel('Accuracy (%)', fontsize=12)
-                ax1.set_ylim(50, 100)  # Set y-axis limits as requested
+                ax1.set_ylim(50, 100)
                 ax1.grid(True, linestyle='--', alpha=0.7)
                 ax1.legend(fontsize=12)
+                ax1.set_xticks(np.arange(0, max(train_acc.step) + 1, 5))
             
             # Plot loss if available
             if 'Loss/train' in tags and 'Loss/test' in tags:
                 ax2 = fig.add_subplot(gs[0, 1])
-                train_loss = pd.DataFrame(event_acc.Scalars('Loss/train'))
-                test_loss = pd.DataFrame(event_acc.Scalars('Loss/test'))
+                train_loss = process_metric_data('Loss/train')
+                test_loss = process_metric_data('Loss/test')
                 
-                ax2.plot(train_loss.step, train_loss.value, label='Training Loss', color='blue', linewidth=2)
-                ax2.plot(test_loss.step, test_loss.value, label='Test Loss', color='red', linewidth=2)
+                ax2.plot(train_loss.step, train_loss.value, 'b-', label='Training Loss', linewidth=2, marker='o')
+                ax2.plot(test_loss.step, test_loss.value, 'r-', label='Test Loss', linewidth=2, marker='o')
                 ax2.set_title('Training and Test Loss', fontsize=14, pad=20)
                 ax2.set_xlabel('Epoch', fontsize=12)
                 ax2.set_ylabel('Loss', fontsize=12)
                 ax2.grid(True, linestyle='--', alpha=0.7)
                 ax2.legend(fontsize=12)
+                ax2.set_xticks(np.arange(0, max(train_loss.step) + 1, 5))
             
             # Plot learning rate if available
             if 'Learning_rate' in tags:
                 ax3 = fig.add_subplot(gs[1, 0])
-                lr = pd.DataFrame(event_acc.Scalars('Learning_rate'))
-                ax3.plot(lr.step, lr.value, label='Learning Rate', color='green', linewidth=2)
+                lr = process_metric_data('Learning_rate')
+                ax3.plot(lr.step, lr.value, 'g-', label='Learning Rate', linewidth=2, marker='o')
                 ax3.set_title('Learning Rate', fontsize=14, pad=20)
                 ax3.set_xlabel('Epoch', fontsize=12)
                 ax3.set_ylabel('Learning Rate', fontsize=12)
                 ax3.grid(True, linestyle='--', alpha=0.7)
                 ax3.legend(fontsize=12)
-                ax3.set_yscale('log')  # Use log scale for learning rate
+                ax3.set_yscale('log')
+                ax3.set_xticks(np.arange(0, max(lr.step) + 1, 5))
             
             # Plot top-5 accuracy if available
             if 'Accuracy/test_top5' in tags:
                 ax4 = fig.add_subplot(gs[1, 1])
-                top5_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test_top5'))
-                ax4.plot(top5_acc.step, top5_acc.value, label='Top-5 Accuracy', color='purple', linewidth=2)
+                top5_acc = process_metric_data('Accuracy/test_top5')
+                ax4.plot(top5_acc.step, top5_acc.value, 'm-', label='Top-5 Accuracy', linewidth=2, marker='o')
                 ax4.set_title('Top-5 Accuracy', fontsize=14, pad=20)
                 ax4.set_xlabel('Epoch', fontsize=12)
                 ax4.set_ylabel('Accuracy (%)', fontsize=12)
-                ax4.set_ylim(50, 100)  # Set y-axis limits as requested
+                ax4.set_ylim(50, 100)
                 ax4.grid(True, linestyle='--', alpha=0.7)
                 ax4.legend(fontsize=12)
+                ax4.set_xticks(np.arange(0, max(top5_acc.step) + 1, 5))
             
             # Adjust layout and save
             plt.tight_layout()
@@ -274,40 +285,16 @@ class ModelAnalyzer:
             plt.close()
             print(f"Training history plot saved to: {save_path}")
             
-            # Save training history to CSV - handle different lengths
+            # Save training history to CSV
             history_data = {}
-            max_length = 0
             
-            # First pass: get max length and collect data
             for tag in tags:
-                data = pd.DataFrame(event_acc.Scalars(tag))
-                max_length = max(max_length, len(data))
-                history_data[tag] = {
-                    'step': data.step.tolist(),
-                    'value': data.value.tolist()
-                }
+                data = process_metric_data(tag)
+                history_data[tag] = data.value.tolist()
             
-            # Second pass: create aligned data
-            aligned_data = {}
-            for tag in history_data:
-                steps = history_data[tag]['step']
-                values = history_data[tag]['value']
-                
-                # Create full range of steps
-                all_steps = range(max(steps) + 1)
-                
-                # Initialize with NaN
-                aligned_values = [np.nan] * len(all_steps)
-                
-                # Fill in actual values
-                for step, value in zip(steps, values):
-                    aligned_values[step] = value
-                
-                aligned_data[tag] = aligned_values
-            
-            history_df = pd.DataFrame(aligned_data)
+            history_df = pd.DataFrame(history_data)
             save_path = self.run_dir / 'training_history.csv'
-            history_df.to_csv(save_path, index=True)
+            history_df.to_csv(save_path, index=False)
             print(f"Training history saved to: {save_path}")
             
         except Exception as e:
