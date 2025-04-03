@@ -178,7 +178,7 @@ class ModelAnalyzer:
             raise
     
     def plot_training_history(self):
-        """Plot training history with proper scaling and formatting"""
+        """Plot training history from TensorBoard logs"""
         print("\nPlotting training history...")
         try:
             # Check if model and data are loaded
@@ -186,37 +186,64 @@ class ModelAnalyzer:
                 print("Error: Model or test data not loaded. Please run load_model_and_data() first.")
                 return
                 
-            # Get training history from the model
-            history = self.model.get_training_history()
-            if not history:
-                print("Error: No training history found.")
+            # Use the logs directory
+            logs_path = Path(self.logs_dir)
+            if not logs_path.exists():
+                print(f"Logs directory not found: {logs_path}")
                 return
                 
-            # Create a figure with subplots
+            # Find the most recent event file
+            event_files = list(logs_path.glob('**/events.out.tfevents.*'))
+            if not event_files:
+                print("No TensorBoard event files found in logs directory")
+                return
+                
+            # Sort by modification time and get the most recent
+            latest_event_file = max(event_files, key=lambda x: x.stat().st_mtime)
+            print(f"Using TensorBoard logs from: {latest_event_file.parent}")
+            
+            from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+            event_acc = EventAccumulator(str(latest_event_file.parent))
+            event_acc.Reload()
+            
+            # Get available tags
+            tags = event_acc.Tags()['scalars']
+            print("Available metrics:", tags)
+            
+            # Create figure with subplots
             fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 15))
             
-            # Plot training and test accuracy
-            ax1.plot(history['train_acc'], label='Training Accuracy', color='blue', linewidth=2)
-            ax1.plot(history['test_acc'], label='Test Accuracy', color='red', linewidth=2)
-            ax1.set_title('Training and Test Accuracy', fontsize=14, pad=20)
-            ax1.set_xlabel('Epoch', fontsize=12)
-            ax1.set_ylabel('Accuracy (%)', fontsize=12)
-            ax1.set_ylim(50, 100)  # Set y-axis limits as requested
-            ax1.grid(True, linestyle='--', alpha=0.7)
-            ax1.legend(fontsize=12)
+            # Plot accuracy if available
+            if 'Accuracy/train' in tags and 'Accuracy/test' in tags:
+                train_acc = pd.DataFrame(event_acc.Scalars('Accuracy/train'))
+                test_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test'))
+                
+                ax1.plot(train_acc.step, train_acc.value, label='Training Accuracy', color='blue', linewidth=2)
+                ax1.plot(test_acc.step, test_acc.value, label='Test Accuracy', color='red', linewidth=2)
+                ax1.set_title('Training and Test Accuracy', fontsize=14, pad=20)
+                ax1.set_xlabel('Epoch', fontsize=12)
+                ax1.set_ylabel('Accuracy (%)', fontsize=12)
+                ax1.set_ylim(50, 100)  # Set y-axis limits as requested
+                ax1.grid(True, linestyle='--', alpha=0.7)
+                ax1.legend(fontsize=12)
             
-            # Plot training and test loss
-            ax2.plot(history['train_loss'], label='Training Loss', color='blue', linewidth=2)
-            ax2.plot(history['test_loss'], label='Test Loss', color='red', linewidth=2)
-            ax2.set_title('Training and Test Loss', fontsize=14, pad=20)
-            ax2.set_xlabel('Epoch', fontsize=12)
-            ax2.set_ylabel('Loss', fontsize=12)
-            ax2.grid(True, linestyle='--', alpha=0.7)
-            ax2.legend(fontsize=12)
+            # Plot loss if available
+            if 'Loss/train' in tags and 'Loss/test' in tags:
+                train_loss = pd.DataFrame(event_acc.Scalars('Loss/train'))
+                test_loss = pd.DataFrame(event_acc.Scalars('Loss/test'))
+                
+                ax2.plot(train_loss.step, train_loss.value, label='Training Loss', color='blue', linewidth=2)
+                ax2.plot(test_loss.step, test_loss.value, label='Test Loss', color='red', linewidth=2)
+                ax2.set_title('Training and Test Loss', fontsize=14, pad=20)
+                ax2.set_xlabel('Epoch', fontsize=12)
+                ax2.set_ylabel('Loss', fontsize=12)
+                ax2.grid(True, linestyle='--', alpha=0.7)
+                ax2.legend(fontsize=12)
             
             # Plot learning rate if available
-            if 'lr' in history:
-                ax3.plot(history['lr'], label='Learning Rate', color='green', linewidth=2)
+            if 'Learning_rate' in tags:
+                lr = pd.DataFrame(event_acc.Scalars('Learning_rate'))
+                ax3.plot(lr.step, lr.value, label='Learning Rate', color='green', linewidth=2)
                 ax3.set_title('Learning Rate', fontsize=14, pad=20)
                 ax3.set_xlabel('Epoch', fontsize=12)
                 ax3.set_ylabel('Learning Rate', fontsize=12)
@@ -225,8 +252,9 @@ class ModelAnalyzer:
                 ax3.set_yscale('log')  # Use log scale for learning rate
             
             # Plot top-5 accuracy if available
-            if 'top5_acc' in history:
-                ax4.plot(history['top5_acc'], label='Top-5 Accuracy', color='purple', linewidth=2)
+            if 'Top5_Accuracy/test' in tags:
+                top5_acc = pd.DataFrame(event_acc.Scalars('Top5_Accuracy/test'))
+                ax4.plot(top5_acc.step, top5_acc.value, label='Top-5 Accuracy', color='purple', linewidth=2)
                 ax4.set_title('Top-5 Accuracy', fontsize=14, pad=20)
                 ax4.set_xlabel('Epoch', fontsize=12)
                 ax4.set_ylabel('Accuracy (%)', fontsize=12)
@@ -242,7 +270,12 @@ class ModelAnalyzer:
             print(f"Training history plot saved to: {save_path}")
             
             # Save training history to CSV
-            history_df = pd.DataFrame(history)
+            history_data = {}
+            for tag in tags:
+                data = pd.DataFrame(event_acc.Scalars(tag))
+                history_data[tag] = data.value.tolist()
+            
+            history_df = pd.DataFrame(history_data)
             save_path = self.run_dir / 'training_history.csv'
             history_df.to_csv(save_path, index=False)
             print(f"Training history saved to: {save_path}")
@@ -315,7 +348,7 @@ class ModelAnalyzer:
             # Plot the confusion matrix with a better colormap
             sns.heatmap(cm, annot=False, fmt='d', cmap='YlOrRd', 
                         xticklabels=self.class_names, yticklabels=self.class_names,
-                        mask=mask)
+                        mask=mask, cbar=True)
             
             # Add diagonal elements separately with a different colormap
             sns.heatmap(cm, annot=False, fmt='d', cmap='YlGnBu',
@@ -329,9 +362,6 @@ class ModelAnalyzer:
             # Rotate x-axis labels for better readability
             plt.xticks(rotation=90, ha='right')
             plt.yticks(rotation=0)
-            
-            # Add a colorbar with a label
-            plt.colorbar(label='Number of Samples')
             
             # Save the figure with high DPI
             save_path = self.run_dir / 'confusion_matrix.png'
