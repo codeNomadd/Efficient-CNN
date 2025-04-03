@@ -217,18 +217,16 @@ class ModelAnalyzer:
             def process_metric_data(tag):
                 """Process metric data to get epoch-wise values"""
                 data = pd.DataFrame(event_acc.Scalars(tag))
-                # Group by epoch (step) and take the last value for each epoch
-                epoch_data = data.groupby(data.step).last().reset_index()
-                return epoch_data
+                return data
             
             # Plot accuracy if available
-            if 'Accuracy/train' in tags and 'Accuracy/test' in tags:
+            if 'Accuracy/train_top1' in tags and 'Accuracy/test_top1' in tags:
                 ax1 = fig.add_subplot(gs[0, 0])
-                train_acc = process_metric_data('Accuracy/train')
-                test_acc = process_metric_data('Accuracy/test')
+                train_acc = process_metric_data('Accuracy/train_top1')
+                test_acc = process_metric_data('Accuracy/test_top1')
                 
-                ax1.plot(train_acc.step, train_acc.value, 'b-', label='Training Accuracy', linewidth=2, marker='o')
-                ax1.plot(test_acc.step, test_acc.value, 'r-', label='Test Accuracy', linewidth=2, marker='o')
+                ax1.plot(train_acc.step, train_acc.value, 'b-', label='Training Accuracy', linewidth=2)
+                ax1.plot(test_acc.step, test_acc.value, 'r-', label='Test Accuracy', linewidth=2)
                 ax1.set_title('Training and Test Accuracy', fontsize=14, pad=20)
                 ax1.set_xlabel('Epoch', fontsize=12)
                 ax1.set_ylabel('Accuracy (%)', fontsize=12)
@@ -243,8 +241,8 @@ class ModelAnalyzer:
                 train_loss = process_metric_data('Loss/train')
                 test_loss = process_metric_data('Loss/test')
                 
-                ax2.plot(train_loss.step, train_loss.value, 'b-', label='Training Loss', linewidth=2, marker='o')
-                ax2.plot(test_loss.step, test_loss.value, 'r-', label='Test Loss', linewidth=2, marker='o')
+                ax2.plot(train_loss.step, train_loss.value, 'b-', label='Training Loss', linewidth=2)
+                ax2.plot(test_loss.step, test_loss.value, 'r-', label='Test Loss', linewidth=2)
                 ax2.set_title('Training and Test Loss', fontsize=14, pad=20)
                 ax2.set_xlabel('Epoch', fontsize=12)
                 ax2.set_ylabel('Loss', fontsize=12)
@@ -256,7 +254,7 @@ class ModelAnalyzer:
             if 'Learning_rate' in tags:
                 ax3 = fig.add_subplot(gs[1, 0])
                 lr = process_metric_data('Learning_rate')
-                ax3.plot(lr.step, lr.value, 'g-', label='Learning Rate', linewidth=2, marker='o')
+                ax3.plot(lr.step, lr.value, 'g-', label='Learning Rate', linewidth=2)
                 ax3.set_title('Learning Rate', fontsize=14, pad=20)
                 ax3.set_xlabel('Epoch', fontsize=12)
                 ax3.set_ylabel('Learning Rate', fontsize=12)
@@ -269,7 +267,7 @@ class ModelAnalyzer:
             if 'Accuracy/test_top5' in tags:
                 ax4 = fig.add_subplot(gs[1, 1])
                 top5_acc = process_metric_data('Accuracy/test_top5')
-                ax4.plot(top5_acc.step, top5_acc.value, 'm-', label='Top-5 Accuracy', linewidth=2, marker='o')
+                ax4.plot(top5_acc.step, top5_acc.value, 'm-', label='Top-5 Accuracy', linewidth=2)
                 ax4.set_title('Top-5 Accuracy', fontsize=14, pad=20)
                 ax4.set_xlabel('Epoch', fontsize=12)
                 ax4.set_ylabel('Accuracy (%)', fontsize=12)
@@ -287,22 +285,34 @@ class ModelAnalyzer:
             # Save training history to CSV
             history_data = {}
             metric_mapping = {
-                'Accuracy/train': 'Training Accuracy',
-                'Accuracy/test': 'Test Accuracy',
+                'Accuracy/train_top1': 'Training Accuracy',
+                'Accuracy/test_top1': 'Test Accuracy',
                 'Loss/train': 'Training Loss',
                 'Loss/test': 'Test Loss',
                 'Learning_rate': 'Learning Rate',
                 'Accuracy/test_top5': 'Top-5 Accuracy'
             }
             
-            for tag in tags:
-                if tag in metric_mapping:
-                    data = process_metric_data(tag)
-                    history_data[metric_mapping[tag]] = data.value.tolist()
+            # Process each metric separately and align by step
+            all_steps = set()
+            raw_data = {}
             
-            history_df = pd.DataFrame(history_data)
+            for tag in metric_mapping.keys():
+                if tag in tags:
+                    data = process_metric_data(tag)
+                    raw_data[tag] = dict(zip(data.step, data.value))
+                    all_steps.update(data.step)
+            
+            # Create aligned data
+            all_steps = sorted(list(all_steps))
+            for tag, name in metric_mapping.items():
+                if tag in raw_data:
+                    history_data[name] = [raw_data[tag].get(step, None) for step in all_steps]
+            
+            history_df = pd.DataFrame(history_data, index=all_steps)
+            history_df.index.name = 'Epoch'
             save_path = self.run_dir / 'training_history.csv'
-            history_df.to_csv(save_path, index=False)
+            history_df.to_csv(save_path)
             print(f"Training history saved to: {save_path}")
             
         except Exception as e:
