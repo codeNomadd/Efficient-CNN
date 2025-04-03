@@ -233,12 +233,12 @@ class ModelAnalyzer:
             cm = np.zeros((self.num_classes, self.num_classes), dtype=int)
             
             # Compute confusion matrix
-            self.model.eval()
+            self.model.get_model().eval()  # Call eval() on the actual PyTorch model
             with torch.no_grad():
                 for images, labels in self.test_loader:
                     images = images.to(self.device)
                     labels = labels.to(self.device)
-                    outputs = self.model(images)
+                    outputs = self.model.get_model()(images)  # Use get_model() to access the PyTorch model
                     _, predicted = outputs.max(1)
                     
                     for t, p in zip(labels.view(-1), predicted.view(-1)):
@@ -286,16 +286,21 @@ class ModelAnalyzer:
             plt.close()
             print(f"Confusion matrix plot saved to: {save_path}")
             
-            return cm
+            return cm, metrics_df  # Return both the confusion matrix and metrics
             
         except Exception as e:
             print(f"Error computing confusion matrix: {e}")
-            return None
+            return None, None  # Return None for both values in case of error
     
     def compute_class_accuracies(self):
         """Compute per-class accuracies"""
         print("\nComputing class-wise accuracies...")
-        cm, _ = self.compute_confusion_matrix()
+        cm, metrics_df = self.compute_confusion_matrix()
+        
+        if cm is None:
+            print("Error: Could not compute confusion matrix")
+            return None
+            
         class_correct = np.diag(cm)
         class_total = np.sum(cm, axis=1)
         class_accuracies = class_correct / class_total

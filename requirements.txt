@@ -7,4 +7,6 @@ tqdm>=4.65.0
 pandas>=1.3.5,<1.4.0
 seaborn>=0.11.0,<0.12.0
 scikit-learn>=1.0.0,<1.1.0
-psutil>=5.9.0 
+psutil>=5.9.0
+thop>=0.1.1  # For FLOPs calculation
+pathlib>=1.0.1  # For path handling 
