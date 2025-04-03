@@ -211,10 +211,12 @@ class ModelAnalyzer:
             print("Available metrics:", tags)
             
             # Create figure with subplots
-            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 15))
+            fig = plt.figure(figsize=(20, 15))
+            gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
             
             # Plot accuracy if available
             if 'Accuracy/train' in tags and 'Accuracy/test' in tags:
+                ax1 = fig.add_subplot(gs[0, 0])
                 train_acc = pd.DataFrame(event_acc.Scalars('Accuracy/train'))
                 test_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test'))
                 
@@ -229,6 +231,7 @@ class ModelAnalyzer:
             
             # Plot loss if available
             if 'Loss/train' in tags and 'Loss/test' in tags:
+                ax2 = fig.add_subplot(gs[0, 1])
                 train_loss = pd.DataFrame(event_acc.Scalars('Loss/train'))
                 test_loss = pd.DataFrame(event_acc.Scalars('Loss/test'))
                 
@@ -242,6 +245,7 @@ class ModelAnalyzer:
             
             # Plot learning rate if available
             if 'Learning_rate' in tags:
+                ax3 = fig.add_subplot(gs[1, 0])
                 lr = pd.DataFrame(event_acc.Scalars('Learning_rate'))
                 ax3.plot(lr.step, lr.value, label='Learning Rate', color='green', linewidth=2)
                 ax3.set_title('Learning Rate', fontsize=14, pad=20)
@@ -253,6 +257,7 @@ class ModelAnalyzer:
             
             # Plot top-5 accuracy if available
             if 'Accuracy/test_top5' in tags:
+                ax4 = fig.add_subplot(gs[1, 1])
                 top5_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test_top5'))
                 ax4.plot(top5_acc.step, top5_acc.value, label='Top-5 Accuracy', color='purple', linewidth=2)
                 ax4.set_title('Top-5 Accuracy', fontsize=14, pad=20)
@@ -273,20 +278,36 @@ class ModelAnalyzer:
             history_data = {}
             max_length = 0
             
-            # First pass: get max length
+            # First pass: get max length and collect data
             for tag in tags:
                 data = pd.DataFrame(event_acc.Scalars(tag))
                 max_length = max(max_length, len(data))
-                history_data[tag] = data.value.tolist()
+                history_data[tag] = {
+                    'step': data.step.tolist(),
+                    'value': data.value.tolist()
+                }
             
-            # Second pass: pad shorter arrays with NaN
+            # Second pass: create aligned data
+            aligned_data = {}
             for tag in history_data:
-                if len(history_data[tag]) < max_length:
-                    history_data[tag].extend([np.nan] * (max_length - len(history_data[tag])))
+                steps = history_data[tag]['step']
+                values = history_data[tag]['value']
+                
+                # Create full range of steps
+                all_steps = range(max(steps) + 1)
+                
+                # Initialize with NaN
+                aligned_values = [np.nan] * len(all_steps)
+                
+                # Fill in actual values
+                for step, value in zip(steps, values):
+                    aligned_values[step] = value
+                
+                aligned_data[tag] = aligned_values
             
-            history_df = pd.DataFrame(history_data)
+            history_df = pd.DataFrame(aligned_data)
             save_path = self.run_dir / 'training_history.csv'
-            history_df.to_csv(save_path, index=False)
+            history_df.to_csv(save_path, index=True)
             print(f"Training history saved to: {save_path}")
             
         except Exception as e:
@@ -307,18 +328,18 @@ class ModelAnalyzer:
             cm = np.zeros((self.num_classes, self.num_classes), dtype=int)
             
             # Compute confusion matrix
-            self.model.get_model().eval()  # Call eval() on the actual PyTorch model
+            self.model.get_model().eval()
             with torch.no_grad():
                 for images, labels in tqdm(self.test_loader, desc="Computing confusion matrix"):
                     images = images.to(self.device)
                     labels = labels.to(self.device)
-                    outputs = self.model.get_model()(images)  # Use get_model() to access the PyTorch model
+                    outputs = self.model.get_model()(images)
                     _, predicted = outputs.max(1)
                     
                     for t, p in zip(labels.view(-1), predicted.view(-1)):
                         cm[t.long(), p.long()] += 1
             
-            # Compute binary classification metrics for each class
+            # Compute metrics for each class
             metrics = []
             for i in range(self.num_classes):
                 tp = cm[i, i]
@@ -351,18 +372,13 @@ class ModelAnalyzer:
             # Plot confusion matrix
             plt.figure(figsize=(20, 20))
             
-            # Create a mask for the diagonal (correct predictions)
-            mask = np.eye(self.num_classes, dtype=bool)
+            # Use a white background
+            plt.style.use('default')
             
-            # Plot the confusion matrix with a better colormap
-            sns.heatmap(cm, annot=False, fmt='d', cmap='YlOrRd', 
+            # Plot the confusion matrix with a professional colormap
+            sns.heatmap(cm, annot=False, fmt='d', cmap='Blues', 
                         xticklabels=self.class_names, yticklabels=self.class_names,
-                        mask=mask, cbar=True)
-            
-            # Add diagonal elements separately with a different colormap
-            sns.heatmap(cm, annot=False, fmt='d', cmap='YlGnBu',
-                        xticklabels=False, yticklabels=False,
-                        mask=~mask, cbar=False)
+                        square=True)
             
             plt.title('Confusion Matrix', fontsize=16, pad=20)
             plt.xlabel('Predicted Class', fontsize=12)
@@ -374,37 +390,9 @@ class ModelAnalyzer:
             
             # Save the figure with high DPI
             save_path = self.run_dir / 'confusion_matrix.png'
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
             plt.close()
             print(f"Confusion matrix plot saved to: {save_path}")
-            
-            # Create a binary confusion matrix visualization for a sample class
-            # Let's use the class with the highest accuracy as an example
-            class_accuracies = np.diag(cm) / np.sum(cm, axis=1)
-            best_class_idx = np.argmax(class_accuracies)
-            
-            # Create a binary confusion matrix for the best class
-            binary_cm = np.zeros((2, 2), dtype=int)
-            binary_cm[0, 0] = cm[best_class_idx, best_class_idx]  # TP
-            binary_cm[0, 1] = np.sum(cm[best_class_idx, :]) - cm[best_class_idx, best_class_idx]  # FN
-            binary_cm[1, 0] = np.sum(cm[:, best_class_idx]) - cm[best_class_idx, best_class_idx]  # FP
-            binary_cm[1, 1] = np.sum(cm) - np.sum(binary_cm)  # TN
-            
-            # Plot binary confusion matrix
-            plt.figure(figsize=(8, 6))
-            sns.heatmap(binary_cm, annot=True, fmt='d', cmap='Blues',
-                        xticklabels=['Negative', 'Positive'],
-                        yticklabels=['Negative', 'Positive'])
-            
-            plt.title(f'Binary Confusion Matrix for Class: {self.class_names[best_class_idx]}', fontsize=14, pad=20)
-            plt.xlabel('Predicted', fontsize=12)
-            plt.ylabel('True', fontsize=12)
-            
-            # Save the figure
-            save_path = self.run_dir / 'binary_confusion_matrix.png'
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            print(f"Binary confusion matrix plot saved to: {save_path}")
             
             return cm, metrics_df
             
@@ -448,24 +436,34 @@ class ModelAnalyzer:
             df.to_csv(save_path, index=False)
             print(f"Class accuracies saved to: {save_path}")
             
-            # Plot top and bottom 10 classes
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+            # Plot bottom 15 classes
+            plt.figure(figsize=(12, 6))
             
-            # Top 10
-            top_10 = df.head(10)
-            ax1.bar(range(len(top_10)), top_10['Accuracy'])
-            ax1.set_title('Top 10 Classes by Accuracy')
-            ax1.set_xticks(range(len(top_10)))
-            ax1.set_xticklabels(top_10['Class'], rotation=45, ha='right')
-            ax1.set_ylabel('Accuracy (%)')
+            # Get bottom 15 classes
+            bottom_15 = df.tail(15)
             
-            # Bottom 10
-            bottom_10 = df.tail(10)
-            ax2.bar(range(len(bottom_10)), bottom_10['Accuracy'])
-            ax2.set_title('Bottom 10 Classes by Accuracy')
-            ax2.set_xticks(range(len(bottom_10)))
-            ax2.set_xticklabels(bottom_10['Class'], rotation=45, ha='right')
-            ax2.set_ylabel('Accuracy (%)')
+            # Create bar plot with custom colors
+            colors = plt.cm.viridis(np.linspace(0, 0.8, len(bottom_15)))
+            bars = plt.bar(range(len(bottom_15)), bottom_15['Accuracy'], color=colors)
+            
+            # Customize the plot
+            plt.title('15 Lowest Performing Classes', fontsize=14, pad=20)
+            plt.xlabel('Class', fontsize=12)
+            plt.ylabel('Accuracy (%)', fontsize=12)
+            
+            # Set x-axis labels
+            plt.xticks(range(len(bottom_15)), bottom_15['Class'], rotation=45, ha='right')
+            
+            # Set y-axis ticks
+            plt.yticks(np.arange(5, 95, 10))
+            plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+            
+            # Add value labels on top of bars
+            for bar in bars:
+                height = bar.get_height()
+                plt.text(bar.get_x() + bar.get_width()/2., height,
+                        f'{height:.1f}%',
+                        ha='center', va='bottom')
             
             plt.tight_layout()
             save_path = self.run_dir / 'class_accuracies.png'
