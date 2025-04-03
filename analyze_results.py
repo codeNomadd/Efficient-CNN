@@ -252,8 +252,8 @@ class ModelAnalyzer:
                 ax3.set_yscale('log')  # Use log scale for learning rate
             
             # Plot top-5 accuracy if available
-            if 'Top5_Accuracy/test' in tags:
-                top5_acc = pd.DataFrame(event_acc.Scalars('Top5_Accuracy/test'))
+            if 'Accuracy/test_top5' in tags:
+                top5_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test_top5'))
                 ax4.plot(top5_acc.step, top5_acc.value, label='Top-5 Accuracy', color='purple', linewidth=2)
                 ax4.set_title('Top-5 Accuracy', fontsize=14, pad=20)
                 ax4.set_xlabel('Epoch', fontsize=12)
@@ -269,11 +269,20 @@ class ModelAnalyzer:
             plt.close()
             print(f"Training history plot saved to: {save_path}")
             
-            # Save training history to CSV
+            # Save training history to CSV - handle different lengths
             history_data = {}
+            max_length = 0
+            
+            # First pass: get max length
             for tag in tags:
                 data = pd.DataFrame(event_acc.Scalars(tag))
+                max_length = max(max_length, len(data))
                 history_data[tag] = data.value.tolist()
+            
+            # Second pass: pad shorter arrays with NaN
+            for tag in history_data:
+                if len(history_data[tag]) < max_length:
+                    history_data[tag].extend([np.nan] * (max_length - len(history_data[tag])))
             
             history_df = pd.DataFrame(history_data)
             save_path = self.run_dir / 'training_history.csv'
@@ -443,14 +452,20 @@ class ModelAnalyzer:
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
             
             # Top 10
-            sns.barplot(data=df.head(10), x='Class', y='Accuracy', ax=ax1)
+            top_10 = df.head(10)
+            ax1.bar(range(len(top_10)), top_10['Accuracy'])
             ax1.set_title('Top 10 Classes by Accuracy')
-            ax1.set_xticklabels(ax1.get_xticklabels(), rotation=45, ha='right')
+            ax1.set_xticks(range(len(top_10)))
+            ax1.set_xticklabels(top_10['Class'], rotation=45, ha='right')
+            ax1.set_ylabel('Accuracy (%)')
             
             # Bottom 10
-            sns.barplot(data=df.tail(10), x='Class', y='Accuracy', ax=ax2)
+            bottom_10 = df.tail(10)
+            ax2.bar(range(len(bottom_10)), bottom_10['Accuracy'])
             ax2.set_title('Bottom 10 Classes by Accuracy')
-            ax2.set_xticklabels(ax2.get_xticklabels(), rotation=45, ha='right')
+            ax2.set_xticks(range(len(bottom_10)))
+            ax2.set_xticklabels(bottom_10['Class'], rotation=45, ha='right')
+            ax2.set_ylabel('Accuracy (%)')
             
             plt.tight_layout()
             save_path = self.run_dir / 'class_accuracies.png'
