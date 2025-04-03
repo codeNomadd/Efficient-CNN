@@ -164,55 +164,83 @@ class ModelAnalyzer:
             event_acc = EventAccumulator(str(self.run_dir))
             event_acc.Reload()
             
-            # Extract scalars
+            # Get available tags
+            tags = event_acc.Tags()['scalars']
+            print("Available metrics:", tags)
+            
+            # Initialize dataframes
+            train_acc = None
+            test_acc = None
+            train_loss = None
+            test_loss = None
+            lr = None
+            
+            # Extract available scalars
             print("Extracting metrics from TensorBoard logs...")
-            train_acc = pd.DataFrame(event_acc.Scalars('Accuracy/train'))
-            test_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test'))
-            train_loss = pd.DataFrame(event_acc.Scalars('Loss/train'))
-            test_loss = pd.DataFrame(event_acc.Scalars('Loss/test'))
-            lr = pd.DataFrame(event_acc.Scalars('Learning_rate'))
+            if 'Accuracy/train' in tags:
+                train_acc = pd.DataFrame(event_acc.Scalars('Accuracy/train'))
+            if 'Accuracy/test' in tags:
+                test_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test'))
+            if 'Loss/train' in tags:
+                train_loss = pd.DataFrame(event_acc.Scalars('Loss/train'))
+            if 'Loss/test' in tags:
+                test_loss = pd.DataFrame(event_acc.Scalars('Loss/test'))
+            if 'Learning_rate' in tags:
+                lr = pd.DataFrame(event_acc.Scalars('Learning_rate'))
             
-            # Create figure with three subplots
-            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
+            # Create figure with subplots based on available data
+            n_plots = sum(x is not None for x in [train_acc, test_acc, train_loss, test_loss, lr])
+            if n_plots == 0:
+                print("No training metrics found in the logs")
+                return
+                
+            fig, axes = plt.subplots(1, n_plots, figsize=(5*n_plots, 5))
+            if n_plots == 1:
+                axes = [axes]
             
-            # Plot accuracy
-            ax1.plot(train_acc.step, train_acc.value, label='Train', linewidth=2, marker='o')
-            ax1.plot(test_acc.step, test_acc.value, label='Validation', linewidth=2, marker='o')
-            ax1.set_title('Training vs Validation Accuracy', fontsize=14, pad=20)
-            ax1.set_xlabel('Epoch', fontsize=12)
-            ax1.set_ylabel('Accuracy (%)', fontsize=12)
-            ax1.legend(fontsize=10)
-            ax1.grid(True, linestyle='--', alpha=0.7)
-            ax1.set_ylim(50, 100)  # Set y-axis limits for accuracy
-            ax1.set_yticks(np.arange(50, 101, 5))  # Set y-axis ticks every 5%
+            plot_idx = 0
             
-            # Plot loss
-            ax2.plot(train_loss.step, train_loss.value, label='Train', linewidth=2, marker='o')
-            ax2.plot(test_loss.step, test_loss.value, label='Validation', linewidth=2, marker='o')
-            ax2.set_title('Training vs Validation Loss', fontsize=14, pad=20)
-            ax2.set_xlabel('Epoch', fontsize=12)
-            ax2.set_ylabel('Loss', fontsize=12)
-            ax2.legend(fontsize=10)
-            ax2.grid(True, linestyle='--', alpha=0.7)
+            # Plot accuracy if available
+            if train_acc is not None or test_acc is not None:
+                ax = axes[plot_idx]
+                if train_acc is not None:
+                    ax.plot(train_acc.step, train_acc.value, label='Train', linewidth=2, marker='o')
+                if test_acc is not None:
+                    ax.plot(test_acc.step, test_acc.value, label='Validation', linewidth=2, marker='o')
+                ax.set_title('Training vs Validation Accuracy', fontsize=14, pad=20)
+                ax.set_xlabel('Epoch', fontsize=12)
+                ax.set_ylabel('Accuracy (%)', fontsize=12)
+                ax.legend(fontsize=10)
+                ax.grid(True, linestyle='--', alpha=0.7)
+                ax.set_ylim(50, 100)
+                ax.set_yticks(np.arange(50, 101, 5))
+                plot_idx += 1
             
-            # Plot learning rate
-            ax3.plot(lr.step, lr.value, label='Learning Rate', linewidth=2, marker='o', color='green')
-            ax3.set_title('Learning Rate over Epochs', fontsize=14, pad=20)
-            ax3.set_xlabel('Epoch', fontsize=12)
-            ax3.set_ylabel('Learning Rate', fontsize=12)
-            ax3.legend(fontsize=10)
-            ax3.grid(True, linestyle='--', alpha=0.7)
-            ax3.set_yscale('log')  # Use log scale for learning rate
+            # Plot loss if available
+            if train_loss is not None or test_loss is not None:
+                ax = axes[plot_idx]
+                if train_loss is not None:
+                    ax.plot(train_loss.step, train_loss.value, label='Train', linewidth=2, marker='o')
+                if test_loss is not None:
+                    ax.plot(test_loss.step, test_loss.value, label='Validation', linewidth=2, marker='o')
+                ax.set_title('Training vs Validation Loss', fontsize=14, pad=20)
+                ax.set_xlabel('Epoch', fontsize=12)
+                ax.set_ylabel('Loss', fontsize=12)
+                ax.legend(fontsize=10)
+                ax.grid(True, linestyle='--', alpha=0.7)
+                plot_idx += 1
             
-            # Add value labels on points for all plots
-            for ax, train_data, test_data in [(ax1, train_acc, test_acc), (ax2, train_loss, test_loss)]:
-                for i, (train_val, test_val) in enumerate(zip(train_data.value, test_data.value)):
-                    ax.text(i, train_val, f'{train_val:.2f}', ha='center', va='bottom')
-                    ax.text(i, test_val, f'{test_val:.2f}', ha='center', va='top')
-            
-            # Add value labels for learning rate
-            for i, lr_val in enumerate(lr.value):
-                ax3.text(i, lr_val, f'{lr_val:.6f}', ha='center', va='bottom')
+            # Plot learning rate if available
+            if lr is not None:
+                ax = axes[plot_idx]
+                ax.plot(lr.step, lr.value, label='Learning Rate', linewidth=2, marker='o', color='green')
+                ax.set_title('Learning Rate over Epochs', fontsize=14, pad=20)
+                ax.set_xlabel('Epoch', fontsize=12)
+                ax.set_ylabel('Learning Rate', fontsize=12)
+                ax.legend(fontsize=10)
+                ax.grid(True, linestyle='--', alpha=0.7)
+                ax.set_yscale('log')
+                plot_idx += 1
             
             plt.tight_layout()
             
@@ -224,6 +252,8 @@ class ModelAnalyzer:
             
         except Exception as e:
             print(f"Error plotting training history: {e}")
+            import traceback
+            traceback.print_exc()
     
     def compute_confusion_matrix(self):
         """Compute and visualize confusion matrix"""
@@ -435,17 +465,20 @@ class ModelAnalyzer:
         """Generate a summary of the model architecture and parameters"""
         print("\nGenerating model summary...")
         try:
+            from thop import profile
+            
             # Get model parameters
-            total_params = sum(p.numel() for p in self.model.parameters())
-            trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            model = self.model.get_model()  # Get the actual PyTorch model
+            total_params = sum(p.numel() for p in model.parameters())
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
             
             # Calculate FLOPs
             input_tensor = torch.randn(1, 3, 224, 224).to(self.device)
-            flops, _ = profile(self.model, inputs=(input_tensor,))
+            flops, _ = profile(model, inputs=(input_tensor,))
             
             # Create summary dictionary
             summary = {
-                'Model': self.model.__class__.__name__,
+                'Model': model.__class__.__name__,
                 'Total Parameters': f"{total_params:,}",
                 'Trainable Parameters': f"{trainable_params:,}",
                 'FLOPs': f"{flops:,}",
@@ -467,6 +500,8 @@ class ModelAnalyzer:
             
         except Exception as e:
             print(f"Error generating model summary: {e}")
+            import traceback
+            traceback.print_exc()
     
     def compute_accuracies(self):
         """Compute top-1 and top-5 accuracies on test set"""
