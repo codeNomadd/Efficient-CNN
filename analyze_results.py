@@ -222,10 +222,10 @@ class ModelAnalyzer:
                 return epoch_data
             
             # Plot accuracy if available
-            if 'Accuracy/train' in tags and 'Accuracy/test' in tags:
+            if 'Accuracy/train_top1' in tags and 'Accuracy/test_top1' in tags:
                 ax1 = fig.add_subplot(gs[0, 0])
-                train_acc = process_metric_data('Accuracy/train')
-                test_acc = process_metric_data('Accuracy/test')
+                train_acc = process_metric_data('Accuracy/train_top1')
+                test_acc = process_metric_data('Accuracy/test_top1')
                 
                 ax1.plot(train_acc.step, train_acc.value, 'b-', label='Training Accuracy', linewidth=2, marker='o')
                 ax1.plot(test_acc.step, test_acc.value, 'r-', label='Test Accuracy', linewidth=2, marker='o')
@@ -278,19 +278,27 @@ class ModelAnalyzer:
                 ax4.legend(fontsize=12)
                 ax4.set_xticks(np.arange(0, max(top5_acc.step) + 1, 5))
             
-            # Adjust layout and save
-            plt.tight_layout()
+            # Save the figure
             save_path = self.run_dir / 'training_history.png'
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
             plt.close()
             print(f"Training history plot saved to: {save_path}")
             
             # Save training history to CSV
             history_data = {}
+            metric_mapping = {
+                'Accuracy/train_top1': 'Training Accuracy',
+                'Accuracy/test_top1': 'Test Accuracy',
+                'Loss/train': 'Training Loss',
+                'Loss/test': 'Test Loss',
+                'Learning_rate': 'Learning Rate',
+                'Accuracy/test_top5': 'Top-5 Accuracy'
+            }
             
             for tag in tags:
-                data = process_metric_data(tag)
-                history_data[tag] = data.value.tolist()
+                if tag in metric_mapping:
+                    data = process_metric_data(tag)
+                    history_data[metric_mapping[tag]] = data.value.tolist()
             
             history_df = pd.DataFrame(history_data)
             save_path = self.run_dir / 'training_history.csv'
