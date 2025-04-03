@@ -161,7 +161,24 @@ class ModelAnalyzer:
         print("\nPlotting training history...")
         try:
             from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-            event_acc = EventAccumulator(str(self.run_dir))
+            
+            # Use the logs directory instead of run directory
+            logs_path = Path(self.logs_dir)
+            if not logs_path.exists():
+                print(f"Logs directory not found: {logs_path}")
+                return
+                
+            # Find the most recent event file
+            event_files = list(logs_path.glob('**/events.out.tfevents.*'))
+            if not event_files:
+                print("No TensorBoard event files found in logs directory")
+                return
+                
+            # Sort by modification time and get the most recent
+            latest_event_file = max(event_files, key=lambda x: x.stat().st_mtime)
+            print(f"Using TensorBoard logs from: {latest_event_file.parent}")
+            
+            event_acc = EventAccumulator(str(latest_event_file.parent))
             event_acc.Reload()
             
             # Get available tags
