@@ -279,6 +279,26 @@ class DynamicLRScheduler:
         print(f"Reduction Factor: {reduction_factor:.4f}")
         print(f"Old LR: {current_lr:.6f}")
         print(f"New LR: {new_lr:.6f}")
+    
+    def state_dict(self):
+        """Return scheduler state as a dictionary"""
+        return {
+            'initial_lr': self.initial_lr,
+            'min_lr': self.min_lr,
+            'patience': self.patience,
+            'window_size': self.window_size,
+            'loss_history': self.loss_history,
+            'lr_history': self.lr_history
+        }
+    
+    def load_state_dict(self, state_dict):
+        """Load scheduler state from a dictionary"""
+        self.initial_lr = state_dict['initial_lr']
+        self.min_lr = state_dict['min_lr']
+        self.patience = state_dict['patience']
+        self.window_size = state_dict['window_size']
+        self.loss_history = state_dict['loss_history']
+        self.lr_history = state_dict['lr_history']
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device, writer, checkpoint_dir):
     """Train the model with dynamic learning rate scheduling based on loss changes"""
