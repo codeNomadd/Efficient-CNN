@@ -178,115 +178,74 @@ class ModelAnalyzer:
             raise
     
     def plot_training_history(self):
-        """Plot training vs validation accuracy/loss from TensorBoard logs"""
+        """Plot training history with proper scaling and formatting"""
         print("\nPlotting training history...")
         try:
-            from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-            
-            # Use the logs directory instead of run directory
-            logs_path = Path(self.logs_dir)
-            if not logs_path.exists():
-                print(f"Logs directory not found: {logs_path}")
+            # Check if model and data are loaded
+            if self.model is None or self.test_loader is None:
+                print("Error: Model or test data not loaded. Please run load_model_and_data() first.")
                 return
                 
-            # Find the most recent event file
-            event_files = list(logs_path.glob('**/events.out.tfevents.*'))
-            if not event_files:
-                print("No TensorBoard event files found in logs directory")
+            # Get training history from the model
+            history = self.model.get_training_history()
+            if not history:
+                print("Error: No training history found.")
                 return
                 
-            # Sort by modification time and get the most recent
-            latest_event_file = max(event_files, key=lambda x: x.stat().st_mtime)
-            print(f"Using TensorBoard logs from: {latest_event_file.parent}")
+            # Create a figure with subplots
+            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 15))
             
-            event_acc = EventAccumulator(str(latest_event_file.parent))
-            event_acc.Reload()
+            # Plot training and test accuracy
+            ax1.plot(history['train_acc'], label='Training Accuracy', color='blue', linewidth=2)
+            ax1.plot(history['test_acc'], label='Test Accuracy', color='red', linewidth=2)
+            ax1.set_title('Training and Test Accuracy', fontsize=14, pad=20)
+            ax1.set_xlabel('Epoch', fontsize=12)
+            ax1.set_ylabel('Accuracy (%)', fontsize=12)
+            ax1.set_ylim(50, 100)  # Set y-axis limits as requested
+            ax1.grid(True, linestyle='--', alpha=0.7)
+            ax1.legend(fontsize=12)
             
-            # Get available tags
-            tags = event_acc.Tags()['scalars']
-            print("Available metrics:", tags)
-            
-            # Initialize dataframes
-            train_acc = None
-            test_acc = None
-            train_loss = None
-            test_loss = None
-            lr = None
-            
-            # Extract available scalars
-            print("Extracting metrics from TensorBoard logs...")
-            if 'Accuracy/train' in tags:
-                train_acc = pd.DataFrame(event_acc.Scalars('Accuracy/train'))
-            if 'Accuracy/test' in tags:
-                test_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test'))
-            if 'Loss/train' in tags:
-                train_loss = pd.DataFrame(event_acc.Scalars('Loss/train'))
-            if 'Loss/test' in tags:
-                test_loss = pd.DataFrame(event_acc.Scalars('Loss/test'))
-            if 'Learning_rate' in tags:
-                lr = pd.DataFrame(event_acc.Scalars('Learning_rate'))
-            
-            # Create figure with subplots based on available data
-            n_plots = sum(x is not None for x in [train_acc, test_acc, train_loss, test_loss, lr])
-            if n_plots == 0:
-                print("No training metrics found in the logs")
-                return
-                
-            fig, axes = plt.subplots(1, n_plots, figsize=(5*n_plots, 5))
-            if n_plots == 1:
-                axes = [axes]
-            
-            plot_idx = 0
-            
-            # Plot accuracy if available
-            if train_acc is not None or test_acc is not None:
-                ax = axes[plot_idx]
-                if train_acc is not None:
-                    ax.plot(train_acc.step, train_acc.value, label='Train', linewidth=2, marker='o')
-                if test_acc is not None:
-                    ax.plot(test_acc.step, test_acc.value, label='Validation', linewidth=2, marker='o')
-                ax.set_title('Training vs Validation Accuracy', fontsize=14, pad=20)
-                ax.set_xlabel('Epoch', fontsize=12)
-                ax.set_ylabel('Accuracy (%)', fontsize=12)
-                ax.legend(fontsize=10)
-                ax.grid(True, linestyle='--', alpha=0.7)
-                ax.set_ylim(50, 100)
-                ax.set_yticks(np.arange(50, 101, 5))
-                plot_idx += 1
-            
-            # Plot loss if available
-            if train_loss is not None or test_loss is not None:
-                ax = axes[plot_idx]
-                if train_loss is not None:
-                    ax.plot(train_loss.step, train_loss.value, label='Train', linewidth=2, marker='o')
-                if test_loss is not None:
-                    ax.plot(test_loss.step, test_loss.value, label='Validation', linewidth=2, marker='o')
-                ax.set_title('Training vs Validation Loss', fontsize=14, pad=20)
-                ax.set_xlabel('Epoch', fontsize=12)
-                ax.set_ylabel('Loss', fontsize=12)
-                ax.legend(fontsize=10)
-                ax.grid(True, linestyle='--', alpha=0.7)
-                plot_idx += 1
+            # Plot training and test loss
+            ax2.plot(history['train_loss'], label='Training Loss', color='blue', linewidth=2)
+            ax2.plot(history['test_loss'], label='Test Loss', color='red', linewidth=2)
+            ax2.set_title('Training and Test Loss', fontsize=14, pad=20)
+            ax2.set_xlabel('Epoch', fontsize=12)
+            ax2.set_ylabel('Loss', fontsize=12)
+            ax2.grid(True, linestyle='--', alpha=0.7)
+            ax2.legend(fontsize=12)
             
             # Plot learning rate if available
-            if lr is not None:
-                ax = axes[plot_idx]
-                ax.plot(lr.step, lr.value, label='Learning Rate', linewidth=2, marker='o', color='green')
-                ax.set_title('Learning Rate over Epochs', fontsize=14, pad=20)
-                ax.set_xlabel('Epoch', fontsize=12)
-                ax.set_ylabel('Learning Rate', fontsize=12)
-                ax.legend(fontsize=10)
-                ax.grid(True, linestyle='--', alpha=0.7)
-                ax.set_yscale('log')
-                plot_idx += 1
+            if 'lr' in history:
+                ax3.plot(history['lr'], label='Learning Rate', color='green', linewidth=2)
+                ax3.set_title('Learning Rate', fontsize=14, pad=20)
+                ax3.set_xlabel('Epoch', fontsize=12)
+                ax3.set_ylabel('Learning Rate', fontsize=12)
+                ax3.grid(True, linestyle='--', alpha=0.7)
+                ax3.legend(fontsize=12)
+                ax3.set_yscale('log')  # Use log scale for learning rate
             
+            # Plot top-5 accuracy if available
+            if 'top5_acc' in history:
+                ax4.plot(history['top5_acc'], label='Top-5 Accuracy', color='purple', linewidth=2)
+                ax4.set_title('Top-5 Accuracy', fontsize=14, pad=20)
+                ax4.set_xlabel('Epoch', fontsize=12)
+                ax4.set_ylabel('Accuracy (%)', fontsize=12)
+                ax4.set_ylim(50, 100)  # Set y-axis limits as requested
+                ax4.grid(True, linestyle='--', alpha=0.7)
+                ax4.legend(fontsize=12)
+            
+            # Adjust layout and save
             plt.tight_layout()
-            
-            # Save the figure
             save_path = self.run_dir / 'training_history.png'
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()
             print(f"Training history plot saved to: {save_path}")
+            
+            # Save training history to CSV
+            history_df = pd.DataFrame(history)
+            save_path = self.run_dir / 'training_history.csv'
+            history_df.to_csv(save_path, index=False)
+            print(f"Training history saved to: {save_path}")
             
         except Exception as e:
             print(f"Error plotting training history: {e}")
@@ -297,13 +256,18 @@ class ModelAnalyzer:
         """Compute and visualize confusion matrix"""
         print("\nComputing confusion matrix...")
         try:
+            # Check if model and data are loaded
+            if self.model is None or self.test_loader is None:
+                print("Error: Model or test data not loaded. Please run load_model_and_data() first.")
+                return None, None
+                
             # Initialize confusion matrix
             cm = np.zeros((self.num_classes, self.num_classes), dtype=int)
             
             # Compute confusion matrix
             self.model.get_model().eval()  # Call eval() on the actual PyTorch model
             with torch.no_grad():
-                for images, labels in self.test_loader:
+                for images, labels in tqdm(self.test_loader, desc="Computing confusion matrix"):
                     images = images.to(self.device)
                     labels = labels.to(self.device)
                     outputs = self.model.get_model()(images)  # Use get_model() to access the PyTorch model
@@ -326,6 +290,7 @@ class ModelAnalyzer:
                 
                 metrics.append({
                     'Class': i,
+                    'Class Name': self.class_names[i],
                     'True Positives': tp,
                     'False Positives': fp,
                     'False Negatives': fn,
@@ -342,23 +307,73 @@ class ModelAnalyzer:
             print(f"Confusion matrix metrics saved to: {save_path}")
             
             # Plot confusion matrix
-            plt.figure(figsize=(10, 8))
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-            plt.title('Confusion Matrix')
-            plt.xlabel('Predicted')
-            plt.ylabel('True')
+            plt.figure(figsize=(20, 20))
             
-            # Save the figure
+            # Create a mask for the diagonal (correct predictions)
+            mask = np.eye(self.num_classes, dtype=bool)
+            
+            # Plot the confusion matrix with a better colormap
+            sns.heatmap(cm, annot=False, fmt='d', cmap='YlOrRd', 
+                        xticklabels=self.class_names, yticklabels=self.class_names,
+                        mask=mask)
+            
+            # Add diagonal elements separately with a different colormap
+            sns.heatmap(cm, annot=False, fmt='d', cmap='YlGnBu',
+                        xticklabels=False, yticklabels=False,
+                        mask=~mask, cbar=False)
+            
+            plt.title('Confusion Matrix', fontsize=16, pad=20)
+            plt.xlabel('Predicted Class', fontsize=12)
+            plt.ylabel('True Class', fontsize=12)
+            
+            # Rotate x-axis labels for better readability
+            plt.xticks(rotation=90, ha='right')
+            plt.yticks(rotation=0)
+            
+            # Add a colorbar with a label
+            plt.colorbar(label='Number of Samples')
+            
+            # Save the figure with high DPI
             save_path = self.run_dir / 'confusion_matrix.png'
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             plt.close()
             print(f"Confusion matrix plot saved to: {save_path}")
             
-            return cm, metrics_df  # Return both the confusion matrix and metrics
+            # Create a binary confusion matrix visualization for a sample class
+            # Let's use the class with the highest accuracy as an example
+            class_accuracies = np.diag(cm) / np.sum(cm, axis=1)
+            best_class_idx = np.argmax(class_accuracies)
+            
+            # Create a binary confusion matrix for the best class
+            binary_cm = np.zeros((2, 2), dtype=int)
+            binary_cm[0, 0] = cm[best_class_idx, best_class_idx]  # TP
+            binary_cm[0, 1] = np.sum(cm[best_class_idx, :]) - cm[best_class_idx, best_class_idx]  # FN
+            binary_cm[1, 0] = np.sum(cm[:, best_class_idx]) - cm[best_class_idx, best_class_idx]  # FP
+            binary_cm[1, 1] = np.sum(cm) - np.sum(binary_cm)  # TN
+            
+            # Plot binary confusion matrix
+            plt.figure(figsize=(8, 6))
+            sns.heatmap(binary_cm, annot=True, fmt='d', cmap='Blues',
+                        xticklabels=['Negative', 'Positive'],
+                        yticklabels=['Negative', 'Positive'])
+            
+            plt.title(f'Binary Confusion Matrix for Class: {self.class_names[best_class_idx]}', fontsize=14, pad=20)
+            plt.xlabel('Predicted', fontsize=12)
+            plt.ylabel('True', fontsize=12)
+            
+            # Save the figure
+            save_path = self.run_dir / 'binary_confusion_matrix.png'
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"Binary confusion matrix plot saved to: {save_path}")
+            
+            return cm, metrics_df
             
         except Exception as e:
             print(f"Error computing confusion matrix: {e}")
-            return None, None  # Return None for both values in case of error
+            import traceback
+            traceback.print_exc()
+            return None, None
     
     def compute_class_accuracies(self):
         """Compute per-class accuracies"""
@@ -513,48 +528,51 @@ class ModelAnalyzer:
         print(f"Misclassified samples visualization saved to: {save_path}")
     
     def generate_model_summary(self):
-        """Generate a summary of the model architecture and parameters"""
+        """Generate a summary of the model architecture and performance metrics"""
         print("\nGenerating model summary...")
-        
-        # Check if model is loaded
-        if self.model is None:
-            print("Error: Model not loaded. Please run load_model_and_data() first.")
-            return None
-            
         try:
-            from thop import profile
+            # Check if model is loaded
+            if self.model is None:
+                print("Error: Model not loaded. Please run load_model_and_data() first.")
+                return
+                
+            # Get model architecture
+            model = self.model.get_model()
             
-            # Get model parameters
-            model = self.model.get_model()  # Get the actual PyTorch model
+            # Calculate total parameters
             total_params = sum(p.numel() for p in model.parameters())
             trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
             
-            # Calculate FLOPs
-            input_tensor = torch.randn(1, 3, 224, 224).to(self.device)
-            flops, _ = profile(model, inputs=(input_tensor,))
+            # Calculate FLOPs using thop
+            from thop import profile
+            input = torch.randn(1, 3, 32, 32).to(self.device)  # CIFAR-100 image size
+            flops, _ = profile(model, inputs=(input,))
+            
+            # Get model name and configuration
+            model_name = model.__class__.__name__
             
             # Create summary dictionary
             summary = {
-                'Model': model.__class__.__name__,
-                'Total Parameters': f"{total_params:,}",
-                'Trainable Parameters': f"{trainable_params:,}",
-                'FLOPs': f"{flops:,}",
-                'Input Shape': '(1, 3, 224, 224)',
-                'Output Shape': f'(1, {self.num_classes})',
+                'Model Name': model_name,
+                'Total Parameters': total_params,
+                'Trainable Parameters': trainable_params,
+                'FLOPs': flops,
+                'Input Size': '3x32x32',
+                'Number of Classes': self.num_classes,
                 'Device': str(self.device)
             }
             
-            # Save to CSV
-            df = pd.DataFrame([summary])
+            # Save summary to CSV
+            summary_df = pd.DataFrame([summary])
             save_path = self.run_dir / 'model_summary.csv'
-            df.to_csv(save_path, index=False)
+            summary_df.to_csv(save_path, index=False)
             print(f"Model summary saved to: {save_path}")
             
             # Print summary
             print("\nModel Summary:")
             for key, value in summary.items():
                 print(f"{key}: {value}")
-                
+            
             return summary
             
         except Exception as e:
@@ -767,39 +785,37 @@ class ModelAnalyzer:
         return df
 
 def main():
-    """Main function to analyze model results"""
-    print("Starting model analysis...")
-    
-    # Initialize analyzer
-    analyzer = ModelAnalyzer()
-    
-    # Load model and data
-    print("\n1. Loading model and data...")
-    if not analyzer.load_model_and_data():
-        print("Failed to load model and data. Exiting analysis.")
-        return
-    
-    # Run each analysis step with error handling
-    analysis_steps = [
-        ("Computing accuracies", analyzer.compute_accuracies),
-        ("Computing confusion matrix", analyzer.compute_confusion_matrix),
-        ("Computing class accuracies", analyzer.compute_class_accuracies),
-        ("Plotting training history", analyzer.plot_training_history),
-        ("Generating model summary", analyzer.generate_model_summary)
-    ]
-    
-    for i, (step_name, step_func) in enumerate(analysis_steps, 2):
-        print(f"\n{i}. {step_name}...")
-        try:
-            step_func()
-        except Exception as e:
-            print(f"Error during {step_name}: {e}")
-            import traceback
-            traceback.print_exc()
-            print(f"Continuing with next step...")
-    
-    print("\nAnalysis complete!")
-    print(f"Results saved in: {analyzer.run_dir}")
+    """Main function to run the analysis"""
+    try:
+        # Initialize the analyzer
+        analyzer = ModelAnalyzer()
+        
+        # Load model and data
+        if not analyzer.load_model_and_data():
+            print("Failed to load model and data. Exiting.")
+            return
+            
+        # Generate model summary with FLOPs
+        analyzer.generate_model_summary()
+        
+        # Plot training history
+        analyzer.plot_training_history()
+        
+        # Compute accuracies
+        analyzer.compute_accuracies()
+        
+        # Compute class accuracies
+        analyzer.compute_class_accuracies()
+        
+        # Compute confusion matrix
+        analyzer.compute_confusion_matrix()
+        
+        print("\nAnalysis completed successfully!")
+        
+    except Exception as e:
+        print(f"Error in main function: {e}")
+        import traceback
+        traceback.print_exc()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main() 

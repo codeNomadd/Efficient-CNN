@@ -23,42 +23,6 @@
         "path": "analysis_results/run_20250403_161304",
         "metrics": {}
     },
-    "run_20250403_161442": {
-        "timestamp": "20250403_161442",
-        "name": "run_20250403_161442",
-        "path": "analysis_results/run_20250403_161442",
-        "metrics": {
-            "top1_accuracy": 83.01,
-            "top5_accuracy": 96.79
-        }
-    },
-    "run_20250403_161822": {
-        "timestamp": "20250403_161822",
-        "name": "run_20250403_161822",
-        "path": "analysis_results/run_20250403_161822",
-        "metrics": {
-            "top1_accuracy": 83.01,
-            "top5_accuracy": 96.79
-        }
-    },
-    "run_20250403_162510": {
-        "timestamp": "20250403_162510",
-        "name": "run_20250403_162510",
-        "path": "analysis_results/run_20250403_162510",
-        "metrics": {
-            "top1_accuracy": 83.01,
-            "top5_accuracy": 96.79
-        }
-    },
-    "run_20250403_162916": {
-        "timestamp": "20250403_162916",
-        "name": "run_20250403_162916",
-        "path": "analysis_results/run_20250403_162916",
-        "metrics": {
-            "top1_accuracy": 83.01,
-            "top5_accuracy": 96.79
-        }
-    },
     "run_20250403_163423": {
         "timestamp": "20250403_163423",
         "name": "run_20250403_163423",
