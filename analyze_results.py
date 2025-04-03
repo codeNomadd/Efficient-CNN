@@ -119,19 +119,35 @@ class ModelAnalyzer:
         print(f"Using device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
         
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"Loading model from: {model_path}")
-        self.model = self._load_model(model_path)
-        
-        print("Loading CIFAR-100 dataset...")
-        self.dataset = CIFAR100Dataset(batch_size=256, num_workers=4)
-        _, self.test_loader = self.dataset.get_data_loaders()
-        self.class_names = self.dataset.classes
+        self.model_path = model_path
+        self.logs_dir = logs_dir
+        self.num_classes = 100  # CIFAR-100 has 100 classes
         
         # Initialize run manager
         self.run_manager = RunManager()
         self.run_dir, self.run_info = self.run_manager.create_new_run(run_name)
         print(f"Results will be saved in: {self.run_dir}/")
         
+    def load_model_and_data(self):
+        """Load the trained model and prepare data loaders"""
+        print("\nLoading model and data...")
+        try:
+            # Load model
+            print(f"Loading model from: {self.model_path}")
+            self.model = self._load_model(self.model_path)
+            
+            # Load dataset
+            print("Loading CIFAR-100 dataset...")
+            self.dataset = CIFAR100Dataset(batch_size=256, num_workers=4)
+            _, self.test_loader = self.dataset.get_data_loaders()
+            self.class_names = self.dataset.classes
+            
+            print("Model and data loaded successfully!")
+            
+        except Exception as e:
+            print(f"Error loading model and data: {e}")
+            raise
+    
     def _load_model(self, model_path):
         """Load the trained model"""
         model = EfficientNetModel()
