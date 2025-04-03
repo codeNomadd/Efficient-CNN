@@ -67,5 +67,35 @@
             "top1_accuracy": 83.01,
             "top5_accuracy": 96.79
         }
+    },
+    "run_20250403_171811": {
+        "timestamp": "20250403_171811",
+        "name": "run_20250403_171811",
+        "path": "analysis_results/run_20250403_171811",
+        "metrics": {}
+    },
+    "run_20250403_172046": {
+        "timestamp": "20250403_172046",
+        "name": "run_20250403_172046",
+        "path": "analysis_results/run_20250403_172046",
+        "metrics": {}
+    },
+    "run_20250403_172251": {
+        "timestamp": "20250403_172251",
+        "name": "run_20250403_172251",
+        "path": "analysis_results/run_20250403_172251",
+        "metrics": {
+            "top1_accuracy": 83.01,
+            "top5_accuracy": 96.79
+        }
+    },
+    "run_20250403_172719": {
+        "timestamp": "20250403_172719",
+        "name": "run_20250403_172719",
+        "path": "analysis_results/run_20250403_172719",
+        "metrics": {
+            "top1_accuracy": 83.01,
+            "top5_accuracy": 96.79
+        }
     }
 }
