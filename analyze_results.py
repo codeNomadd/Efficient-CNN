@@ -14,6 +14,7 @@ from tqdm import tqdm
 import datetime
 import json
 import shutil
+from thop import profile
 
 class RunManager:
     def __init__(self, base_dir='analysis_results'):
@@ -153,9 +154,10 @@ class ModelAnalyzer:
             test_acc = pd.DataFrame(event_acc.Scalars('Accuracy/test'))
             train_loss = pd.DataFrame(event_acc.Scalars('Loss/train'))
             test_loss = pd.DataFrame(event_acc.Scalars('Loss/test'))
+            lr = pd.DataFrame(event_acc.Scalars('Learning_rate'))
             
-            # Create figure with two subplots
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+            # Create figure with three subplots
+            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
             
             # Plot accuracy
             ax1.plot(train_acc.step, train_acc.value, label='Train', linewidth=2, marker='o')
@@ -165,8 +167,8 @@ class ModelAnalyzer:
             ax1.set_ylabel('Accuracy (%)', fontsize=12)
             ax1.legend(fontsize=10)
             ax1.grid(True, linestyle='--', alpha=0.7)
-            ax1.set_ylim(70, 100)  # Set y-axis limits for accuracy
-            ax1.set_yticks(np.arange(70, 101, 5))  # Set y-axis ticks every 5%
+            ax1.set_ylim(50, 100)  # Set y-axis limits for accuracy
+            ax1.set_yticks(np.arange(50, 101, 5))  # Set y-axis ticks every 5%
             
             # Plot loss
             ax2.plot(train_loss.step, train_loss.value, label='Train', linewidth=2, marker='o')
@@ -177,11 +179,24 @@ class ModelAnalyzer:
             ax2.legend(fontsize=10)
             ax2.grid(True, linestyle='--', alpha=0.7)
             
-            # Add value labels on points for both plots
+            # Plot learning rate
+            ax3.plot(lr.step, lr.value, label='Learning Rate', linewidth=2, marker='o', color='green')
+            ax3.set_title('Learning Rate over Epochs', fontsize=14, pad=20)
+            ax3.set_xlabel('Epoch', fontsize=12)
+            ax3.set_ylabel('Learning Rate', fontsize=12)
+            ax3.legend(fontsize=10)
+            ax3.grid(True, linestyle='--', alpha=0.7)
+            ax3.set_yscale('log')  # Use log scale for learning rate
+            
+            # Add value labels on points for all plots
             for ax, train_data, test_data in [(ax1, train_acc, test_acc), (ax2, train_loss, test_loss)]:
                 for i, (train_val, test_val) in enumerate(zip(train_data.value, test_data.value)):
                     ax.text(i, train_val, f'{train_val:.2f}', ha='center', va='bottom')
                     ax.text(i, test_val, f'{test_val:.2f}', ha='center', va='top')
+            
+            # Add value labels for learning rate
+            for i, lr_val in enumerate(lr.value):
+                ax3.text(i, lr_val, f'{lr_val:.6f}', ha='center', va='bottom')
             
             plt.tight_layout()
             
@@ -195,48 +210,71 @@ class ModelAnalyzer:
             print(f"Error plotting training history: {e}")
     
     def compute_confusion_matrix(self):
-        """Compute and plot confusion matrix"""
+        """Compute and visualize confusion matrix"""
         print("\nComputing confusion matrix...")
-        all_preds = []
-        all_labels = []
-        
-        print("Running inference on test set...")
-        with torch.no_grad():
-            for images, labels in tqdm(self.test_loader, desc="Processing test set"):
-                images = images.to(self.device)
-                outputs = self.model.get_model()(images)
-                _, predicted = outputs.max(1)
-                all_preds.extend(predicted.cpu().numpy())
-                all_labels.extend(labels.numpy())
-        
-        # Compute confusion matrix
-        print("Generating confusion matrices...")
-        cm = confusion_matrix(all_labels, all_preds)
-        cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-        
-        # Plot raw confusion matrix
-        plt.figure(figsize=(20, 20))
-        sns.heatmap(cm, annot=False, fmt='d', cmap='Blues')
-        plt.title('Raw Confusion Matrix')
-        plt.xlabel('Predicted')
-        plt.ylabel('True')
-        save_path = self.run_dir / 'confusion_matrix_raw.png'
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        print(f"Raw confusion matrix saved to: {save_path}")
-        
-        # Plot normalized confusion matrix
-        plt.figure(figsize=(20, 20))
-        sns.heatmap(cm_norm, annot=False, fmt='.2f', cmap='Blues')
-        plt.title('Normalized Confusion Matrix')
-        plt.xlabel('Predicted')
-        plt.ylabel('True')
-        save_path = self.run_dir / 'confusion_matrix_normalized.png'
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        print(f"Normalized confusion matrix saved to: {save_path}")
-        
-        return cm, cm_norm
+        try:
+            # Initialize confusion matrix
+            cm = np.zeros((self.num_classes, self.num_classes), dtype=int)
+            
+            # Compute confusion matrix
+            self.model.eval()
+            with torch.no_grad():
+                for images, labels in self.test_loader:
+                    images = images.to(self.device)
+                    labels = labels.to(self.device)
+                    outputs = self.model(images)
+                    _, predicted = outputs.max(1)
+                    
+                    for t, p in zip(labels.view(-1), predicted.view(-1)):
+                        cm[t.long(), p.long()] += 1
+            
+            # Compute binary classification metrics for each class
+            metrics = []
+            for i in range(self.num_classes):
+                tp = cm[i, i]
+                fp = cm[:, i].sum() - tp
+                fn = cm[i, :].sum() - tp
+                tn = cm.sum() - (tp + fp + fn)
+                
+                precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+                recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+                f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+                
+                metrics.append({
+                    'Class': i,
+                    'True Positives': tp,
+                    'False Positives': fp,
+                    'False Negatives': fn,
+                    'True Negatives': tn,
+                    'Precision': precision,
+                    'Recall': recall,
+                    'F1 Score': f1
+                })
+            
+            # Save metrics to CSV
+            metrics_df = pd.DataFrame(metrics)
+            save_path = self.run_dir / 'confusion_matrix_metrics.csv'
+            metrics_df.to_csv(save_path, index=False)
+            print(f"Confusion matrix metrics saved to: {save_path}")
+            
+            # Plot confusion matrix
+            plt.figure(figsize=(10, 8))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+            plt.title('Confusion Matrix')
+            plt.xlabel('Predicted')
+            plt.ylabel('True')
+            
+            # Save the figure
+            save_path = self.run_dir / 'confusion_matrix.png'
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"Confusion matrix plot saved to: {save_path}")
+            
+            return cm
+            
+        except Exception as e:
+            print(f"Error computing confusion matrix: {e}")
+            return None
     
     def compute_class_accuracies(self):
         """Compute per-class accuracies"""
@@ -372,40 +410,42 @@ class ModelAnalyzer:
         plt.close()
         print(f"Misclassified samples visualization saved to: {save_path}")
     
-    def summarize_model(self):
-        """Create summary table with model details"""
+    def generate_model_summary(self):
+        """Generate a summary of the model architecture and parameters"""
         print("\nGenerating model summary...")
-        # Count parameters
-        total_params = sum(p.numel() for p in self.model.get_model().parameters())
-        trainable_params = sum(p.numel() for p in self.model.get_model().parameters() if p.requires_grad)
-        
-        # Compute accuracy on test set
-        correct = 0
-        total = 0
-        print("Computing test set accuracy...")
-        with torch.no_grad():
-            for images, labels in self.test_loader:
-                images = images.to(self.device)
-                labels = labels.to(self.device)
-                outputs = self.model.get_model()(images)
-                _, predicted = outputs.max(1)
-                total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
-        
-        accuracy = 100 * correct / total
-        
-        # Create summary DataFrame
-        summary = pd.DataFrame({
-            'Metric': ['Model Name', 'Total Parameters', 'Trainable Parameters', 'Test Accuracy'],
-            'Value': ['EfficientNet-B0', f'{total_params:,}', f'{trainable_params:,}', f'{accuracy:.2f}%']
-        })
-        
-        # Save to CSV
-        save_path = self.run_dir / 'model_summary.csv'
-        summary.to_csv(save_path, index=False)
-        print(f"Model summary saved to: {save_path}")
-        
-        return summary
+        try:
+            # Get model parameters
+            total_params = sum(p.numel() for p in self.model.parameters())
+            trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            
+            # Calculate FLOPs
+            input_tensor = torch.randn(1, 3, 224, 224).to(self.device)
+            flops, _ = profile(self.model, inputs=(input_tensor,))
+            
+            # Create summary dictionary
+            summary = {
+                'Model': self.model.__class__.__name__,
+                'Total Parameters': f"{total_params:,}",
+                'Trainable Parameters': f"{trainable_params:,}",
+                'FLOPs': f"{flops:,}",
+                'Input Shape': '(1, 3, 224, 224)',
+                'Output Shape': f'(1, {self.num_classes})',
+                'Device': str(self.device)
+            }
+            
+            # Save to CSV
+            df = pd.DataFrame([summary])
+            save_path = self.run_dir / 'model_summary.csv'
+            df.to_csv(save_path, index=False)
+            print(f"Model summary saved to: {save_path}")
+            
+            # Print summary
+            print("\nModel Summary:")
+            for key, value in summary.items():
+                print(f"{key}: {value}")
+            
+        except Exception as e:
+            print(f"Error generating model summary: {e}")
     
     def compute_accuracies(self):
         """Compute top-1 and top-5 accuracies on test set"""
@@ -598,55 +638,31 @@ class ModelAnalyzer:
         return df
 
 def main():
-    """Run all analyses"""
+    """Main function to analyze model results"""
     print("Starting model analysis...")
+    
+    # Initialize analyzer
     analyzer = ModelAnalyzer()
     
-    print("\nComputing accuracies...")
-    top1_acc, top5_acc = analyzer.compute_accuracies()
+    print("\n1. Loading model and data...")
+    analyzer.load_model_and_data()
     
-    print("\n1. Plotting training history...")
-    analyzer.plot_training_history()
+    print("\n2. Computing accuracies...")
+    analyzer.compute_accuracies()
     
-    print("\n2. Computing confusion matrices...")
+    print("\n3. Computing confusion matrix...")
     analyzer.compute_confusion_matrix()
     
-    print("\n3. Computing confusion matrix metrics...")
-    confusion_metrics = analyzer.compute_confusion_matrix_metrics()
-    print("\nConfusion Matrix Metrics:")
-    print(confusion_metrics.to_string(index=False))
+    print("\n4. Computing class accuracies...")
+    analyzer.compute_class_accuracies()
     
-    print("\n4. Computing class-wise accuracies...")
-    class_accuracies = analyzer.compute_class_accuracies()
-    print("\nTop 5 classes:")
-    print(class_accuracies.head())
-    print("\nBottom 5 classes:")
-    print(class_accuracies.tail())
+    print("\n5. Plotting training history...")
+    analyzer.plot_training_history()
     
-    print("\n5. Finding most confused class pairs...")
-    confused_pairs = analyzer.find_most_confused_pairs()
-    print("\nTop 5 confused pairs:")
-    print(confused_pairs.head())
+    print("\n6. Generating model summary...")
+    analyzer.generate_model_summary()
     
-    print("\n6. Visualizing misclassified samples...")
-    analyzer.visualize_misclassified()
-    
-    print("\n7. Generating model summary...")
-    summary = analyzer.summarize_model()
-    print("\nModel Summary:")
-    print(summary.to_string(index=False))
-    
-    print("\n8. Visualizing model architecture...")
-    architecture = analyzer.visualize_model_architecture()
-    print("\nModel Architecture:")
-    print(architecture.to_string(index=False))
-    
-    # Generate comparative plots
-    print("\n9. Generating comparative plots...")
-    analyzer.run_manager.plot_comparative_metrics('top1_accuracy')
-    
-    print(f"\nAnalysis complete! Results saved in '{analyzer.run_dir}' directory.")
-    print("You can find the comparative plots in the 'analysis_results' directory.")
+    print("\nAnalysis complete!")
 
 if __name__ == '__main__':
     main() 
