@@ -16,6 +16,7 @@ from model import EfficientNetModel
 from dataset import CIFAR100Dataset
 from monitor import SystemMonitor
 import platform
+import pandas as pd
 
 def clear_memory():
     """Clear GPU memory and cache"""
@@ -186,24 +187,33 @@ class Trainer:
             self.optimizer,
             initial_lr=learning_rate,
             min_lr=1e-6,
-            patience=3,
+            patience=5,  # Increased patience for LR adjustment
             window_size=3
         )
         
         # Mixed precision training
         self.scaler = GradScaler()
         
-        # Tensorboard writer
-        self.writer = SummaryWriter('runs/efficientnet_cifar100')
-        
         # Training metrics
         self.train_losses = []
         self.test_losses = []
         self.train_accuracies = []
         self.test_accuracies = []
+        self.learning_rates = []
+        
+        # Early stopping parameters
+        self.best_test_loss = float('inf')
+        self.best_test_acc = 0
+        self.patience = 15  # Increased patience for early stopping
+        self.patience_counter = 0
+        self.min_delta = 0.0001  # Smaller delta for more precise stopping
         
         # System monitor
         self.monitor = SystemMonitor()
+        
+        # Create metrics directory
+        os.makedirs('metrics', exist_ok=True)
+        os.makedirs('checkpoints', exist_ok=True)
         
     def train_epoch(self):
         """Train for one epoch"""
@@ -276,9 +286,21 @@ class Trainer:
         accuracy = 100. * correct / total
         return epoch_loss, accuracy
     
-    def train(self, num_epochs=10, save_best=True):
+    def save_metrics(self):
+        """Save training metrics to CSV"""
+        metrics_df = pd.DataFrame({
+            'Epoch': range(1, len(self.train_losses) + 1),
+            'Train Loss': self.train_losses,
+            'Test Loss': self.test_losses,
+            'Train Accuracy': self.train_accuracies,
+            'Test Accuracy': self.test_accuracies,
+            'Learning Rate': self.learning_rates
+        })
+        metrics_df.to_csv('metrics/training_history.csv', index=False)
+        print("Training metrics saved to: metrics/training_history.csv")
+    
+    def train(self, num_epochs=30, save_best=True):
         """Train the model"""
-        best_accuracy = 0.0
         start_time = time.time()
         
         for epoch in range(num_epochs):
@@ -288,83 +310,79 @@ class Trainer:
             train_loss, train_acc = self.train_epoch()
             test_loss, test_acc = self.evaluate()
             
-            # Update learning rate
+            # Update learning rate based on test loss
             self.scheduler.step(test_loss)
+            current_lr = self.optimizer.param_groups[0]['lr']
             
-            # Log metrics
+            # Store metrics
             self.train_losses.append(train_loss)
             self.test_losses.append(test_loss)
             self.train_accuracies.append(train_acc)
             self.test_accuracies.append(test_acc)
+            self.learning_rates.append(current_lr)
             
-            # Tensorboard logging
-            self.writer.add_scalar('Loss/train', train_loss, epoch)
-            self.writer.add_scalar('Loss/test', test_loss, epoch)
-            self.writer.add_scalar('Accuracy/train', train_acc, epoch)
-            self.writer.add_scalar('Accuracy/test', test_acc, epoch)
-            self.writer.add_scalar('Learning_rate', self.optimizer.param_groups[0]['lr'], epoch)
+            # Save metrics after each epoch
+            self.save_metrics()
             
             print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%')
             print(f'Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.2f}%')
-            print(f'Learning Rate: {self.optimizer.param_groups[0]["lr"]:.6f}')
+            print(f'Learning Rate: {current_lr:.6f}')
             
-            # Save best model
-            if save_best and test_acc > best_accuracy:
-                best_accuracy = test_acc
+            # Save best model based on test loss
+            if test_loss < self.best_test_loss - self.min_delta:
+                self.best_test_loss = test_loss
+                self.best_test_acc = test_acc
+                self.patience_counter = 0
+                
+                if save_best:
+                    self.model.save_checkpoint(
+                        'checkpoints/best_model.pth',
+                        epoch,
+                        self.optimizer,
+                        test_loss,
+                        test_acc
+                    )
+                    print(f"New best model saved! Test Loss: {test_loss:.4f}, Test Accuracy: {test_acc:.2f}%")
+            else:
+                self.patience_counter += 1
+                print(f"No improvement in test loss. Patience: {self.patience_counter}/{self.patience}")
+                
+                if self.patience_counter >= self.patience:
+                    print(f"\nEarly stopping triggered! No improvement for {self.patience} epochs.")
+                    break
+            
+            # Save last model every 5 epochs and at the end
+            if (epoch + 1) % 5 == 0 or epoch == num_epochs - 1:
                 self.model.save_checkpoint(
-                    'checkpoints/best_model.pth',
+                    f'checkpoints/model_epoch_{epoch+1}.pth',
                     epoch,
                     self.optimizer,
                     test_loss,
                     test_acc
                 )
-            
-            # Plot current metrics
-            self.plot_metrics()
+                print(f"Checkpoint saved at epoch {epoch+1}")
             
             # Print system metrics
             self.monitor.print_metrics()
             
             # Clear memory after each epoch
             clear_memory()
+            
+            # Check if learning rate is too small
+            if current_lr <= self.scheduler.min_lr:
+                print("\nLearning rate reached minimum value. Stopping training.")
+                break
         
-        # Print training time
+        # Print training time and final results
         training_time = time.time() - start_time
         print(f'\nTraining completed in {training_time:.2f} seconds')
+        print(f'Best test accuracy: {self.best_test_acc:.2f}%')
+        print(f'Best test loss: {self.best_test_loss:.4f}')
         
         # Save final system metrics
         self.monitor.save_metrics()
         
-    def plot_metrics(self):
-        """Plot training metrics"""
-        plt.figure(figsize=(12, 4))
-        
-        # Plot loss
-        plt.subplot(1, 2, 1)
-        plt.plot(self.train_losses, label='Train Loss')
-        plt.plot(self.test_losses, label='Test Loss')
-        plt.title('Loss over epochs')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.legend()
-        
-        # Plot accuracy
-        plt.subplot(1, 2, 2)
-        plt.plot(self.train_accuracies, label='Train Accuracy')
-        plt.plot(self.test_accuracies, label='Test Accuracy')
-        plt.title('Accuracy over epochs')
-        plt.xlabel('Epoch')
-        plt.ylabel('Accuracy (%)')
-        plt.legend()
-        
-        plt.tight_layout()
-        plt.savefig('training_metrics.png')
-        plt.close()
-        
-        # Clear matplotlib memory
-        plt.clf()
-        plt.close('all')
-        clear_memory()
+        return self.best_test_acc, self.best_test_loss
 
 def main():
     # Clear memory at start
@@ -406,7 +424,7 @@ def main():
     print(f"Training on device: {model.device}")
     print(f"Number of training batches: {len(train_loader)}")
     print(f"Number of test batches: {len(test_loader)}")
-    trainer.train(num_epochs=10, save_best=True)
+    best_accuracy, best_loss = trainer.train(num_epochs=30, save_best=True)
 
     print("\nTraining completed! Check the following:")
     print("- Training metrics plot: training_metrics.png")

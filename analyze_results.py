@@ -178,103 +178,126 @@ class ModelAnalyzer:
             raise
     
     def plot_training_history(self):
-        """Plot training history from TensorBoard logs"""
+        """Plot training history from saved metrics"""
         print("\nPlotting training history...")
         try:
-            # Check if model and data are loaded
-            if self.model is None or self.test_loader is None:
-                print("Error: Model or test data not loaded. Please run load_model_and_data() first.")
+            # Load metrics from CSV
+            metrics_path = Path('metrics/training_history.csv')
+            if not metrics_path.exists():
+                print(f"Metrics file not found: {metrics_path}")
                 return
-                
-            # Use the logs directory
-            logs_path = Path(self.logs_dir)
-            if not logs_path.exists():
-                print(f"Logs directory not found: {logs_path}")
-                return
-                
-            # Find the most recent event file
-            event_files = list(logs_path.glob('**/events.out.tfevents.*'))
-            if not event_files:
-                print("No TensorBoard event files found in logs directory")
-                return
-                
-            # Sort by modification time and get the most recent
-            latest_event_file = max(event_files, key=lambda x: x.stat().st_mtime)
-            print(f"Using TensorBoard logs from: {latest_event_file.parent}")
             
-            from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-            event_acc = EventAccumulator(str(latest_event_file.parent))
-            event_acc.Reload()
-            
-            # Get available tags
-            tags = event_acc.Tags()['scalars']
-            print("Available metrics:", tags)
+            # Read metrics
+            metrics_df = pd.read_csv(metrics_path)
+            print("Loaded training metrics:")
+            print(metrics_df.head())
             
             # Create figure with subplots
             fig = plt.figure(figsize=(20, 15))
             gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
             
-            def process_metric_data(tag):
-                """Process metric data to get epoch-wise values"""
-                data = pd.DataFrame(event_acc.Scalars(tag))
-                return data
+            # Plot accuracy
+            ax1 = fig.add_subplot(gs[0, 0])
+            ax1.plot(metrics_df['Epoch'], metrics_df['Train Accuracy'], 'b-', 
+                    label='Training Accuracy', linewidth=2, marker='o', markersize=4)
+            ax1.plot(metrics_df['Epoch'], metrics_df['Test Accuracy'], 'r-',
+                    label='Test Accuracy', linewidth=2, marker='o', markersize=4)
+            ax1.set_title('Training and Test Accuracy', fontsize=14, pad=20)
+            ax1.set_xlabel('Epoch', fontsize=12)
+            ax1.set_ylabel('Accuracy (%)', fontsize=12)
+            ax1.set_ylim(50, 100)
+            ax1.grid(True, linestyle='--', alpha=0.7)
+            ax1.legend(fontsize=12, loc='lower right')
             
-            # Plot accuracy if available
-            if 'Accuracy/train_top1' in tags and 'Accuracy/test_top1' in tags:
-                ax1 = fig.add_subplot(gs[0, 0])
-                train_acc = process_metric_data('Accuracy/train_top1')
-                test_acc = process_metric_data('Accuracy/test_top1')
-                
-                ax1.plot(train_acc.step, train_acc.value, 'b-', label='Training Accuracy', linewidth=2)
-                ax1.plot(test_acc.step, test_acc.value, 'r-', label='Test Accuracy', linewidth=2)
-                ax1.set_title('Training and Test Accuracy', fontsize=14, pad=20)
-                ax1.set_xlabel('Epoch', fontsize=12)
-                ax1.set_ylabel('Accuracy (%)', fontsize=12)
-                ax1.set_ylim(50, 100)
-                ax1.grid(True, linestyle='--', alpha=0.7)
-                ax1.legend(fontsize=12)
-                ax1.set_xticks(np.arange(0, max(train_acc.step) + 1, 5))
+            # Set x-axis ticks to show every 5 epochs
+            max_epoch = max(metrics_df['Epoch'])
+            ax1.set_xticks(np.arange(0, max_epoch + 1, 5))
             
-            # Plot loss if available
-            if 'Loss/train' in tags and 'Loss/test' in tags:
-                ax2 = fig.add_subplot(gs[0, 1])
-                train_loss = process_metric_data('Loss/train')
-                test_loss = process_metric_data('Loss/test')
-                
-                ax2.plot(train_loss.step, train_loss.value, 'b-', label='Training Loss', linewidth=2)
-                ax2.plot(test_loss.step, test_loss.value, 'r-', label='Test Loss', linewidth=2)
-                ax2.set_title('Training and Test Loss', fontsize=14, pad=20)
-                ax2.set_xlabel('Epoch', fontsize=12)
-                ax2.set_ylabel('Loss', fontsize=12)
-                ax2.grid(True, linestyle='--', alpha=0.7)
-                ax2.legend(fontsize=12)
-                ax2.set_xticks(np.arange(0, max(train_loss.step) + 1, 5))
+            # Add value labels at the end of lines
+            last_train_acc = metrics_df['Train Accuracy'].iloc[-1]
+            last_test_acc = metrics_df['Test Accuracy'].iloc[-1]
+            ax1.annotate(f'{last_train_acc:.1f}%', 
+                        xy=(max_epoch, last_train_acc),
+                        xytext=(5, 0), textcoords='offset points',
+                        va='center')
+            ax1.annotate(f'{last_test_acc:.1f}%',
+                        xy=(max_epoch, last_test_acc),
+                        xytext=(5, 0), textcoords='offset points',
+                        va='center')
             
-            # Plot learning rate if available
-            if 'Learning_rate' in tags:
-                ax3 = fig.add_subplot(gs[1, 0])
-                lr = process_metric_data('Learning_rate')
-                ax3.plot(lr.step, lr.value, 'g-', label='Learning Rate', linewidth=2)
-                ax3.set_title('Learning Rate', fontsize=14, pad=20)
-                ax3.set_xlabel('Epoch', fontsize=12)
-                ax3.set_ylabel('Learning Rate', fontsize=12)
-                ax3.grid(True, linestyle='--', alpha=0.7)
-                ax3.legend(fontsize=12)
-                ax3.set_yscale('log')
-                ax3.set_xticks(np.arange(0, max(lr.step) + 1, 5))
+            # Plot loss
+            ax2 = fig.add_subplot(gs[0, 1])
+            ax2.plot(metrics_df['Epoch'], metrics_df['Train Loss'], 'b-',
+                    label='Training Loss', linewidth=2, marker='o', markersize=4)
+            ax2.plot(metrics_df['Epoch'], metrics_df['Test Loss'], 'r-',
+                    label='Test Loss', linewidth=2, marker='o', markersize=4)
+            ax2.set_title('Training and Test Loss', fontsize=14, pad=20)
+            ax2.set_xlabel('Epoch', fontsize=12)
+            ax2.set_ylabel('Loss', fontsize=12)
+            ax2.grid(True, linestyle='--', alpha=0.7)
+            ax2.legend(fontsize=12, loc='upper right')
+            ax2.set_xticks(np.arange(0, max_epoch + 1, 5))
             
-            # Plot top-5 accuracy if available
-            if 'Accuracy/test_top5' in tags:
-                ax4 = fig.add_subplot(gs[1, 1])
-                top5_acc = process_metric_data('Accuracy/test_top5')
-                ax4.plot(top5_acc.step, top5_acc.value, 'm-', label='Top-5 Accuracy', linewidth=2)
-                ax4.set_title('Top-5 Accuracy', fontsize=14, pad=20)
-                ax4.set_xlabel('Epoch', fontsize=12)
-                ax4.set_ylabel('Accuracy (%)', fontsize=12)
-                ax4.set_ylim(50, 100)
-                ax4.grid(True, linestyle='--', alpha=0.7)
-                ax4.legend(fontsize=12)
-                ax4.set_xticks(np.arange(0, max(top5_acc.step) + 1, 5))
+            # Add value labels at the end of lines
+            last_train_loss = metrics_df['Train Loss'].iloc[-1]
+            last_test_loss = metrics_df['Test Loss'].iloc[-1]
+            ax2.annotate(f'{last_train_loss:.4f}',
+                        xy=(max_epoch, last_train_loss),
+                        xytext=(5, 0), textcoords='offset points',
+                        va='center')
+            ax2.annotate(f'{last_test_loss:.4f}',
+                        xy=(max_epoch, last_test_loss),
+                        xytext=(5, 0), textcoords='offset points',
+                        va='center')
+            
+            # Plot learning rate
+            ax3 = fig.add_subplot(gs[1, 0])
+            ax3.plot(metrics_df['Epoch'], metrics_df['Learning Rate'], 'g-',
+                    label='Learning Rate', linewidth=2, marker='o', markersize=4)
+            ax3.set_title('Learning Rate', fontsize=14, pad=20)
+            ax3.set_xlabel('Epoch', fontsize=12)
+            ax3.set_ylabel('Learning Rate', fontsize=12)
+            ax3.grid(True, linestyle='--', alpha=0.7)
+            ax3.legend(fontsize=12, loc='upper right')
+            ax3.set_yscale('log')
+            ax3.set_xticks(np.arange(0, max_epoch + 1, 5))
+            
+            # Add value label at the end of line
+            last_lr = metrics_df['Learning Rate'].iloc[-1]
+            ax3.annotate(f'{last_lr:.6f}',
+                        xy=(max_epoch, last_lr),
+                        xytext=(5, 0), textcoords='offset points',
+                        va='center')
+            
+            # Add summary statistics in the empty subplot
+            ax4 = fig.add_subplot(gs[1, 1])
+            ax4.axis('off')
+            
+            # Calculate statistics
+            best_epoch = metrics_df['Test Accuracy'].idxmax() + 1
+            best_test_acc = metrics_df['Test Accuracy'].max()
+            final_test_acc = metrics_df['Test Accuracy'].iloc[-1]
+            best_test_loss = metrics_df['Test Loss'].min()
+            final_test_loss = metrics_df['Test Loss'].iloc[-1]
+            
+            # Create summary text
+            summary = (
+                f"Training Summary\n\n"
+                f"Total Epochs: {max_epoch}\n"
+                f"Best Test Accuracy: {best_test_acc:.2f}% (Epoch {best_epoch})\n"
+                f"Final Test Accuracy: {final_test_acc:.2f}%\n"
+                f"Best Test Loss: {best_test_loss:.4f}\n"
+                f"Final Test Loss: {final_test_loss:.4f}\n"
+                f"Initial Learning Rate: {metrics_df['Learning Rate'].iloc[0]:.6f}\n"
+                f"Final Learning Rate: {last_lr:.6f}"
+            )
+            
+            ax4.text(0.5, 0.5, summary,
+                    horizontalalignment='center',
+                    verticalalignment='center',
+                    transform=ax4.transAxes,
+                    fontsize=12,
+                    family='monospace')
             
             # Save the figure
             save_path = self.run_dir / 'training_history.png'
@@ -282,38 +305,10 @@ class ModelAnalyzer:
             plt.close()
             print(f"Training history plot saved to: {save_path}")
             
-            # Save training history to CSV
-            history_data = {}
-            metric_mapping = {
-                'Accuracy/train_top1': 'Training Accuracy',
-                'Accuracy/test_top1': 'Test Accuracy',
-                'Loss/train': 'Training Loss',
-                'Loss/test': 'Test Loss',
-                'Learning_rate': 'Learning Rate',
-                'Accuracy/test_top5': 'Top-5 Accuracy'
-            }
-            
-            # Process each metric separately and align by step
-            all_steps = set()
-            raw_data = {}
-            
-            for tag in metric_mapping.keys():
-                if tag in tags:
-                    data = process_metric_data(tag)
-                    raw_data[tag] = dict(zip(data.step, data.value))
-                    all_steps.update(data.step)
-            
-            # Create aligned data
-            all_steps = sorted(list(all_steps))
-            for tag, name in metric_mapping.items():
-                if tag in raw_data:
-                    history_data[name] = [raw_data[tag].get(step, None) for step in all_steps]
-            
-            history_df = pd.DataFrame(history_data, index=all_steps)
-            history_df.index.name = 'Epoch'
+            # Save metrics to CSV in the run directory
             save_path = self.run_dir / 'training_history.csv'
-            history_df.to_csv(save_path)
-            print(f"Training history saved to: {save_path}")
+            metrics_df.to_csv(save_path, index=False)
+            print(f"Training metrics saved to: {save_path}")
             
         except Exception as e:
             print(f"Error plotting training history: {e}")
