@@ -128,10 +128,22 @@ class ModelAnalyzer:
         self.run_dir, self.run_info = self.run_manager.create_new_run(run_name)
         print(f"Results will be saved in: {self.run_dir}/")
         
+        # Initialize model and data as None
+        self.model = None
+        self.dataset = None
+        self.test_loader = None
+        self.class_names = None
+        
     def load_model_and_data(self):
         """Load the trained model and prepare data loaders"""
         print("\nLoading model and data...")
         try:
+            # Check if model file exists
+            if not Path(self.model_path).exists():
+                print(f"Error: Model file not found at {self.model_path}")
+                print("Please check the model path and try again.")
+                return False
+                
             # Load model
             print(f"Loading model from: {self.model_path}")
             self.model = self._load_model(self.model_path)
@@ -143,18 +155,27 @@ class ModelAnalyzer:
             self.class_names = self.dataset.classes
             
             print("Model and data loaded successfully!")
+            return True
             
         except Exception as e:
             print(f"Error loading model and data: {e}")
-            raise
+            import traceback
+            traceback.print_exc()
+            return False
     
     def _load_model(self, model_path):
         """Load the trained model"""
-        model = EfficientNetModel()
-        checkpoint = torch.load(model_path, map_location=self.device)
-        model.get_model().load_state_dict(checkpoint['model_state_dict'])
-        model.get_model().eval()
-        return model
+        try:
+            model = EfficientNetModel()
+            checkpoint = torch.load(model_path, map_location=self.device)
+            model.get_model().load_state_dict(checkpoint['model_state_dict'])
+            model.get_model().eval()
+            return model
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     def plot_training_history(self):
         """Plot training vs validation accuracy/loss from TensorBoard logs"""
@@ -342,50 +363,63 @@ class ModelAnalyzer:
     def compute_class_accuracies(self):
         """Compute per-class accuracies"""
         print("\nComputing class-wise accuracies...")
-        cm, metrics_df = self.compute_confusion_matrix()
         
-        if cm is None:
-            print("Error: Could not compute confusion matrix")
+        # Check if model and data are loaded
+        if self.model is None or self.test_loader is None:
+            print("Error: Model or test data not loaded. Please run load_model_and_data() first.")
             return None
             
-        class_correct = np.diag(cm)
-        class_total = np.sum(cm, axis=1)
-        class_accuracies = class_correct / class_total
-        
-        # Create DataFrame with class accuracies
-        df = pd.DataFrame({
-            'Class': self.class_names,
-            'Accuracy': class_accuracies * 100,
-            'Correct': class_correct,
-            'Total': class_total
-        })
-        df = df.sort_values('Accuracy', ascending=False)
-        
-        # Save to CSV
-        save_path = self.run_dir / 'class_accuracies.csv'
-        df.to_csv(save_path, index=False)
-        print(f"Class accuracies saved to: {save_path}")
-        
-        # Plot top and bottom 10 classes
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
-        
-        # Top 10
-        sns.barplot(data=df.head(10), x='Class', y='Accuracy', ax=ax1)
-        ax1.set_title('Top 10 Classes by Accuracy')
-        ax1.set_xticklabels(ax1.get_xticklabels(), rotation=45, ha='right')
-        
-        # Bottom 10
-        sns.barplot(data=df.tail(10), x='Class', y='Accuracy', ax=ax2)
-        ax2.set_title('Bottom 10 Classes by Accuracy')
-        ax2.set_xticklabels(ax2.get_xticklabels(), rotation=45, ha='right')
-        
-        plt.tight_layout()
-        save_path = self.run_dir / 'class_accuracies.png'
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        print(f"Class accuracies plot saved to: {save_path}")
-        
-        return df
+        try:
+            cm, metrics_df = self.compute_confusion_matrix()
+            
+            if cm is None:
+                print("Error: Could not compute confusion matrix")
+                return None
+                
+            class_correct = np.diag(cm)
+            class_total = np.sum(cm, axis=1)
+            class_accuracies = class_correct / class_total
+            
+            # Create DataFrame with class accuracies
+            df = pd.DataFrame({
+                'Class': self.class_names,
+                'Accuracy': class_accuracies * 100,
+                'Correct': class_correct,
+                'Total': class_total
+            })
+            df = df.sort_values('Accuracy', ascending=False)
+            
+            # Save to CSV
+            save_path = self.run_dir / 'class_accuracies.csv'
+            df.to_csv(save_path, index=False)
+            print(f"Class accuracies saved to: {save_path}")
+            
+            # Plot top and bottom 10 classes
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+            
+            # Top 10
+            sns.barplot(data=df.head(10), x='Class', y='Accuracy', ax=ax1)
+            ax1.set_title('Top 10 Classes by Accuracy')
+            ax1.set_xticklabels(ax1.get_xticklabels(), rotation=45, ha='right')
+            
+            # Bottom 10
+            sns.barplot(data=df.tail(10), x='Class', y='Accuracy', ax=ax2)
+            ax2.set_title('Bottom 10 Classes by Accuracy')
+            ax2.set_xticklabels(ax2.get_xticklabels(), rotation=45, ha='right')
+            
+            plt.tight_layout()
+            save_path = self.run_dir / 'class_accuracies.png'
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"Class accuracies plot saved to: {save_path}")
+            
+            return df
+            
+        except Exception as e:
+            print(f"Error computing class accuracies: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
     
     def find_most_confused_pairs(self):
         """Find and visualize top-10 most confused class pairs"""
@@ -481,6 +515,12 @@ class ModelAnalyzer:
     def generate_model_summary(self):
         """Generate a summary of the model architecture and parameters"""
         print("\nGenerating model summary...")
+        
+        # Check if model is loaded
+        if self.model is None:
+            print("Error: Model not loaded. Please run load_model_and_data() first.")
+            return None
+            
         try:
             from thop import profile
             
@@ -514,58 +554,74 @@ class ModelAnalyzer:
             print("\nModel Summary:")
             for key, value in summary.items():
                 print(f"{key}: {value}")
+                
+            return summary
             
         except Exception as e:
             print(f"Error generating model summary: {e}")
             import traceback
             traceback.print_exc()
+            return None
     
     def compute_accuracies(self):
         """Compute top-1 and top-5 accuracies on test set"""
         print("\nComputing top-1 and top-5 accuracies...")
-        correct_top1 = 0
-        correct_top5 = 0
-        total = 0
         
-        with torch.no_grad():
-            for images, labels in tqdm(self.test_loader, desc="Computing accuracies"):
-                images = images.to(self.device)
-                labels = labels.to(self.device)
-                outputs = self.model.get_model()(images)
-                
-                # Top-1 accuracy
-                _, predicted = outputs.max(1)
-                correct_top1 += predicted.eq(labels).sum().item()
-                
-                # Top-5 accuracy
-                _, top5_pred = outputs.topk(5, 1, True, True)
-                correct_top5 += top5_pred.eq(labels.view(-1, 1)).sum().item()
-                
-                total += labels.size(0)
-        
-        top1_accuracy = 100. * correct_top1 / total
-        top5_accuracy = 100. * correct_top5 / total
-        
-        print(f"\nTest Set Performance:")
-        print(f"Top-1 Accuracy: {top1_accuracy:.2f}%")
-        print(f"Top-5 Accuracy: {top5_accuracy:.2f}%")
-        
-        # Save to CSV
-        df = pd.DataFrame({
-            'Metric': ['Top-1 Accuracy', 'Top-5 Accuracy'],
-            'Value': [f"{top1_accuracy:.2f}%", f"{top5_accuracy:.2f}%"]
-        })
-        save_path = self.run_dir / 'accuracies.csv'
-        df.to_csv(save_path, index=False)
-        print(f"Accuracies saved to: {save_path}")
-        
-        # Update run metrics
-        self.run_manager.update_run_metrics(self.run_info['name'], {
-            'top1_accuracy': top1_accuracy,
-            'top5_accuracy': top5_accuracy
-        })
-        
-        return top1_accuracy, top5_accuracy
+        # Check if model and data are loaded
+        if self.model is None or self.test_loader is None:
+            print("Error: Model or test data not loaded. Please run load_model_and_data() first.")
+            return None, None
+            
+        try:
+            correct_top1 = 0
+            correct_top5 = 0
+            total = 0
+            
+            with torch.no_grad():
+                for images, labels in tqdm(self.test_loader, desc="Computing accuracies"):
+                    images = images.to(self.device)
+                    labels = labels.to(self.device)
+                    outputs = self.model.get_model()(images)
+                    
+                    # Top-1 accuracy
+                    _, predicted = outputs.max(1)
+                    correct_top1 += predicted.eq(labels).sum().item()
+                    
+                    # Top-5 accuracy
+                    _, top5_pred = outputs.topk(5, 1, True, True)
+                    correct_top5 += top5_pred.eq(labels.view(-1, 1)).sum().item()
+                    
+                    total += labels.size(0)
+            
+            top1_accuracy = 100. * correct_top1 / total
+            top5_accuracy = 100. * correct_top5 / total
+            
+            print(f"\nTest Set Performance:")
+            print(f"Top-1 Accuracy: {top1_accuracy:.2f}%")
+            print(f"Top-5 Accuracy: {top5_accuracy:.2f}%")
+            
+            # Save to CSV
+            df = pd.DataFrame({
+                'Metric': ['Top-1 Accuracy', 'Top-5 Accuracy'],
+                'Value': [f"{top1_accuracy:.2f}%", f"{top5_accuracy:.2f}%"]
+            })
+            save_path = self.run_dir / 'accuracies.csv'
+            df.to_csv(save_path, index=False)
+            print(f"Accuracies saved to: {save_path}")
+            
+            # Update run metrics
+            self.run_manager.update_run_metrics(self.run_info['name'], {
+                'top1_accuracy': top1_accuracy,
+                'top5_accuracy': top5_accuracy
+            })
+            
+            return top1_accuracy, top5_accuracy
+            
+        except Exception as e:
+            print(f"Error computing accuracies: {e}")
+            import traceback
+            traceback.print_exc()
+            return None, None
     
     def visualize_model_architecture(self):
         """Create a visualization of the model architecture"""
@@ -717,25 +773,33 @@ def main():
     # Initialize analyzer
     analyzer = ModelAnalyzer()
     
+    # Load model and data
     print("\n1. Loading model and data...")
-    analyzer.load_model_and_data()
+    if not analyzer.load_model_and_data():
+        print("Failed to load model and data. Exiting analysis.")
+        return
     
-    print("\n2. Computing accuracies...")
-    analyzer.compute_accuracies()
+    # Run each analysis step with error handling
+    analysis_steps = [
+        ("Computing accuracies", analyzer.compute_accuracies),
+        ("Computing confusion matrix", analyzer.compute_confusion_matrix),
+        ("Computing class accuracies", analyzer.compute_class_accuracies),
+        ("Plotting training history", analyzer.plot_training_history),
+        ("Generating model summary", analyzer.generate_model_summary)
+    ]
     
-    print("\n3. Computing confusion matrix...")
-    analyzer.compute_confusion_matrix()
-    
-    print("\n4. Computing class accuracies...")
-    analyzer.compute_class_accuracies()
-    
-    print("\n5. Plotting training history...")
-    analyzer.plot_training_history()
-    
-    print("\n6. Generating model summary...")
-    analyzer.generate_model_summary()
+    for i, (step_name, step_func) in enumerate(analysis_steps, 2):
+        print(f"\n{i}. {step_name}...")
+        try:
+            step_func()
+        except Exception as e:
+            print(f"Error during {step_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"Continuing with next step...")
     
     print("\nAnalysis complete!")
+    print(f"Results saved in: {analyzer.run_dir}")
 
 if __name__ == '__main__':
     main() 
