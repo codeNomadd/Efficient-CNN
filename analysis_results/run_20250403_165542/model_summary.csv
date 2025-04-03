@@ -1,0 +1,2 @@
+Model Name,Total Parameters,Trainable Parameters,FLOPs,Input Size,Number of Classes,Device
+EfficientNet,4135648,4135648,9198656.0,3x32x32,100,cuda
