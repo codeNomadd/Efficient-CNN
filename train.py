@@ -170,6 +170,30 @@ class DynamicLRScheduler:
         self.loss_history = state_dict['loss_history']
         self.lr_history = state_dict['lr_history']
 
+class EarlyStopping:
+    def __init__(self, patience=15, min_delta=0.001, verbose=True):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.verbose = verbose
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+        self.val_loss_min = float('inf')
+
+    def __call__(self, val_loss):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+        elif val_loss > self.best_loss - self.min_delta:
+            self.counter += 1
+            if self.verbose:
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_loss = val_loss
+            self.counter = 0
+        return self.early_stop
+
 class Trainer:
     def __init__(self, model, train_loader, test_loader, device, run_dir):
         self.model = model
