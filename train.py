@@ -188,8 +188,11 @@ class Trainer:
         # Initialize TensorBoard writer
         self.writer = SummaryWriter(log_dir=run_dir)
         
-        # Initialize model
-        self.model = self.model.to(device)
+        # Initialize model - ensure it's on the correct device
+        if isinstance(self.model, nn.Module):
+            self.model = self.model.to(device)
+        else:
+            self.model = self.model.get_model().to(device)
         
         # Initialize optimizer with weight decay
         self.optimizer = optim.AdamW(
