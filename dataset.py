@@ -21,11 +21,19 @@ def set_seed(seed=42):
 
 class CIFAR100Dataset:
     def __init__(self, batch_size=128, num_workers=4):
-        """Initialize CIFAR-100 dataset with improved augmentation"""
+        """Initialize CIFAR-100 dataset with native resolution (32x32)
+        
+        Note: We use native CIFAR-100 resolution instead of resizing to 224x224
+        because:
+        1. EfficientNet can work with any input size through compound scaling
+        2. Native resolution preserves original image information
+        3. Avoids artifacts from upscaling small images
+        4. Better matches CIFAR-100's object scales
+        """
         self.batch_size = batch_size
         self.num_workers = num_workers
         
-        # Define transformations with improved augmentation
+        # Define transformations with improved augmentation for 32x32 images
         self.train_transform = transforms.Compose([
             transforms.RandomCrop(32, padding=4),
             transforms.RandomHorizontalFlip(),

@@ -189,8 +189,8 @@ class Trainer:
             epochs=30,
             steps_per_epoch=len(train_loader),
             pct_start=0.3,  # 30% of training for warmup
-            div_factor=25.0,
-            final_div_factor=10000.0
+            div_factor=10.0,  # Reduced from 25.0 to 10.0
+            final_div_factor=1000.0  # Reduced from 10000.0 to 1000.0
         )
         
         # Mixed precision training
@@ -242,7 +242,7 @@ class Trainer:
             self.scaler.step(self.optimizer)
             self.scaler.update()
             
-            # Update learning rate
+            # Update learning rate AFTER optimizer step
             self.scheduler.step()
             
             running_loss += loss.item()
