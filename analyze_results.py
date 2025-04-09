@@ -365,33 +365,38 @@ class ModelAnalyzer:
 def main():
     """Main function to run the analysis"""
     try:
-        # Initialize the analyzer
-        analyzer = ModelAnalyzer()
+        # Set device
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"Using device: {device}")
         
-        # Load model and data
-        if not analyzer.load_model_and_data():
-            print("Failed to load model and data. Exiting.")
+        # Initialize dataset
+        dataset = CIFAR100Dataset(batch_size=256, num_workers=4)
+        print("Dataset initialized")
+        
+        # Initialize model path
+        model_path = 'checkpoints/best_model.pth'
+        if not os.path.exists(model_path):
+            print(f"Error: Model file not found at {model_path}")
             return
-            
-        # Generate model summary with FLOPs
-        analyzer.generate_model_summary()
         
-        # Plot training history
-        analyzer.plot_training_history()
+        # Initialize analyzer
+        analyzer = ModelAnalyzer(
+            model_path=model_path,
+            dataset=dataset,
+            device=device
+        )
+        print("Model analyzer initialized")
         
-        # Compute accuracies
-        analyzer.compute_accuracies()
+        # Create run directory
+        run_dir = os.path.join('analysis_results', f'run_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}')
+        os.makedirs(run_dir, exist_ok=True)
+        print(f"Results will be saved in: {run_dir}")
         
-        # Compute class accuracies
-        analyzer.compute_class_accuracies()
-        
-        # Compute confusion matrix
-        analyzer.compute_confusion_matrix()
-        
-        print("\nAnalysis completed successfully!")
+        # Run analysis
+        analyzer.analyze(run_dir)
         
     except Exception as e:
-        print(f"Error in main function: {e}")
+        print(f"Error in main function: {str(e)}")
         import traceback
         traceback.print_exc()
 
