@@ -194,6 +194,28 @@ class EarlyStopping:
             self.counter = 0
         return self.early_stop
 
+class Checkpoint:
+    def __init__(self, model, optimizer, scheduler, path='checkpoints'):
+        self.model = model
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.path = path
+        self.best_acc = 0.0
+        os.makedirs(path, exist_ok=True)
+        
+    def save(self, epoch, acc):
+        if acc > self.best_acc:
+            self.best_acc = acc
+            state = {
+                'epoch': epoch,
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'scheduler_state_dict': self.scheduler.state_dict(),
+                'best_acc': self.best_acc
+            }
+            torch.save(state, os.path.join(self.path, 'best_model.pth'))
+            print(f'Checkpoint saved at epoch {epoch} with accuracy {acc:.2f}%')
+
 class Trainer:
     def __init__(self, model, train_loader, test_loader, device, run_dir):
         self.model = model
@@ -401,6 +423,13 @@ def main():
     os.makedirs('checkpoints', exist_ok=True)
     os.makedirs('runs', exist_ok=True)
     os.makedirs('data', exist_ok=True)
+    os.makedirs('logs', exist_ok=True)
+
+    # Initialize system monitor
+    print("\nInitializing system monitor...")
+    system_monitor = SystemMonitor()
+    system_monitor.update_metrics()
+    system_monitor.print_metrics()
 
     # Initialize seed manager
     print("\nInitializing seed manager...")
@@ -433,7 +462,15 @@ def main():
     print(f"Training on device: {model.device}")
     print(f"Number of training batches: {len(train_loader)}")
     print(f"Number of test batches: {len(test_loader)}")
+    
+    # Update system metrics before training
+    system_monitor.update_metrics()
+    
     best_accuracy = trainer.train(num_epochs=100)
+    
+    # Update and save final system metrics
+    system_monitor.update_metrics()
+    system_monitor.save_metrics()
 
     print("\nTraining completed! Check the following:")
     print("- Training metrics plot: training_metrics.png")
