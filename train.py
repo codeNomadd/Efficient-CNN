@@ -183,6 +183,8 @@ class Trainer:
         self.test_losses = []
         self.train_accs = []
         self.test_accs = []
+        self.train_accs_top5 = []  # Add top-5 accuracy tracking
+        self.test_accs_top5 = []   # Add top-5 accuracy tracking
         self.learning_rates = []
         
         # Initialize TensorBoard writer
@@ -238,6 +240,7 @@ class Trainer:
         self.model.train()
         running_loss = 0.0
         correct = 0
+        correct_top5 = 0
         total = 0
         
         # Progress bar
@@ -265,33 +268,40 @@ class Trainer:
             # Update metrics
             running_loss += loss.item()
             _, predicted = outputs.max(1)
+            _, predicted_top5 = outputs.topk(5, 1, True, True)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
+            correct_top5 += predicted_top5.eq(targets.view(-1, 1)).sum().item()
             
             # Update progress bar
             pbar.set_postfix({
                 'loss': running_loss/(batch_idx+1),
                 'acc': 100.*correct/total,
+                'acc_top5': 100.*correct_top5/total,
                 'lr': self.scheduler.get_last_lr()[0]
             })
         
         # Log metrics
         epoch_loss = running_loss/len(self.train_loader)
         epoch_acc = 100.*correct/total
+        epoch_acc_top5 = 100.*correct_top5/total
         self.train_losses.append(epoch_loss)
         self.train_accs.append(epoch_acc)
+        self.train_accs_top5.append(epoch_acc_top5)
         self.learning_rates.append(self.scheduler.get_last_lr()[0])
         
         self.writer.add_scalar('Loss/train', epoch_loss, epoch)
         self.writer.add_scalar('Accuracy/train', epoch_acc, epoch)
+        self.writer.add_scalar('Accuracy/train_top5', epoch_acc_top5, epoch)
         self.writer.add_scalar('Learning Rate', self.scheduler.get_last_lr()[0], epoch)
         
-        return epoch_loss, epoch_acc
+        return epoch_loss, epoch_acc, epoch_acc_top5
     
     def test_epoch(self, epoch):
         self.model.eval()
         running_loss = 0.0
         correct = 0
+        correct_top5 = 0
         total = 0
         
         with torch.no_grad():
@@ -305,32 +315,37 @@ class Trainer:
                 
                 running_loss += loss.item()
                 _, predicted = outputs.max(1)
+                _, predicted_top5 = outputs.topk(5, 1, True, True)
                 total += targets.size(0)
                 correct += predicted.eq(targets).sum().item()
+                correct_top5 += predicted_top5.eq(targets.view(-1, 1)).sum().item()
         
         # Log metrics
         epoch_loss = running_loss/len(self.test_loader)
         epoch_acc = 100.*correct/total
+        epoch_acc_top5 = 100.*correct_top5/total
         self.test_losses.append(epoch_loss)
         self.test_accs.append(epoch_acc)
+        self.test_accs_top5.append(epoch_acc_top5)
         
         self.writer.add_scalar('Loss/test', epoch_loss, epoch)
         self.writer.add_scalar('Accuracy/test', epoch_acc, epoch)
+        self.writer.add_scalar('Accuracy/test_top5', epoch_acc_top5, epoch)
         
-        return epoch_loss, epoch_acc
+        return epoch_loss, epoch_acc, epoch_acc_top5
     
     def train(self, num_epochs=100):
         best_acc = 0.0
         
         for epoch in range(num_epochs):
             # Train and test
-            train_loss, train_acc = self.train_epoch(epoch)
-            test_loss, test_acc = self.test_epoch(epoch)
+            train_loss, train_acc, train_acc_top5 = self.train_epoch(epoch)
+            test_loss, test_acc, test_acc_top5 = self.test_epoch(epoch)
             
             # Print epoch results
             print(f'Epoch {epoch}:')
-            print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%')
-            print(f'Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.2f}%')
+            print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%, Train Acc Top-5: {train_acc_top5:.2f}%')
+            print(f'Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.2f}%, Test Acc Top-5: {test_acc_top5:.2f}%')
             
             # Save checkpoint
             self.checkpoint.save(epoch, test_acc)

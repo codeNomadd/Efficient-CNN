@@ -14,7 +14,7 @@ from tqdm import tqdm
 import datetime
 import json
 import shutil
-from thop import profile
+import thop
 import os
 
 class RunManager:
@@ -137,7 +137,7 @@ class ModelAnalyzer:
         """Plot training history from TensorBoard logs"""
         try:
             # Load metrics from CSV
-            metrics_file = os.path.join(run_dir, 'metrics', 'training_history.csv')
+            metrics_file = 'metrics/training_history.csv'
             if not os.path.exists(metrics_file):
                 print(f"Metrics file not found: {metrics_file}")
                 return
@@ -150,8 +150,10 @@ class ModelAnalyzer:
             
             # Plot accuracy
             ax = axes[0, 0]
-            ax.plot(metrics_df['Epoch'], metrics_df['Train Accuracy'], label='Train', marker='o', markersize=3)
-            ax.plot(metrics_df['Epoch'], metrics_df['Test Accuracy'], label='Test', marker='o', markersize=3)
+            ax.plot(metrics_df['Epoch'], metrics_df['Train Accuracy'], label='Train Top-1', marker='o', markersize=3)
+            ax.plot(metrics_df['Epoch'], metrics_df['Test Accuracy'], label='Test Top-1', marker='o', markersize=3)
+            ax.plot(metrics_df['Epoch'], metrics_df['Train Accuracy Top-5'], label='Train Top-5', marker='o', markersize=3, linestyle='--')
+            ax.plot(metrics_df['Epoch'], metrics_df['Test Accuracy Top-5'], label='Test Top-5', marker='o', markersize=3, linestyle='--')
             ax.set_title('Accuracy')
             ax.set_xlabel('Epoch')
             ax.set_ylabel('Accuracy (%)')
@@ -164,6 +166,10 @@ class ModelAnalyzer:
                    f'{metrics_df["Train Accuracy"].iloc[-1]:.2f}%', ha='left', va='center')
             ax.text(last_epoch, metrics_df['Test Accuracy'].iloc[-1], 
                    f'{metrics_df["Test Accuracy"].iloc[-1]:.2f}%', ha='left', va='center')
+            ax.text(last_epoch, metrics_df['Train Accuracy Top-5'].iloc[-1], 
+                   f'{metrics_df["Train Accuracy Top-5"].iloc[-1]:.2f}%', ha='left', va='center')
+            ax.text(last_epoch, metrics_df['Test Accuracy Top-5'].iloc[-1], 
+                   f'{metrics_df["Test Accuracy Top-5"].iloc[-1]:.2f}%', ha='left', va='center')
             
             # Plot loss
             ax = axes[0, 1]
@@ -198,8 +204,10 @@ class ModelAnalyzer:
             ax.axis('off')
             stats_text = (
                 f'Total Epochs: {len(metrics_df)}\n'
-                f'Best Test Accuracy: {metrics_df["Test Accuracy"].max():.2f}%\n'
-                f'Final Test Accuracy: {metrics_df["Test Accuracy"].iloc[-1]:.2f}%\n'
+                f'Best Test Accuracy (Top-1): {metrics_df["Test Accuracy"].max():.2f}%\n'
+                f'Final Test Accuracy (Top-1): {metrics_df["Test Accuracy"].iloc[-1]:.2f}%\n'
+                f'Best Test Accuracy (Top-5): {metrics_df["Test Accuracy Top-5"].max():.2f}%\n'
+                f'Final Test Accuracy (Top-5): {metrics_df["Test Accuracy Top-5"].iloc[-1]:.2f}%\n'
                 f'Best Test Loss: {metrics_df["Test Loss"].min():.4f}\n'
                 f'Final Test Loss: {metrics_df["Test Loss"].iloc[-1]:.4f}\n'
                 f'Initial LR: {metrics_df["Learning Rate"].iloc[0]:.6f}\n'
