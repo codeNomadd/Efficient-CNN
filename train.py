@@ -171,216 +171,184 @@ class DynamicLRScheduler:
         self.lr_history = state_dict['lr_history']
 
 class Trainer:
-    def __init__(self, model, train_loader, test_loader, learning_rate=0.001):
-        """Initialize trainer"""
+    def __init__(self, model, train_loader, test_loader, device, run_dir):
         self.model = model
         self.train_loader = train_loader
         self.test_loader = test_loader
-        self.device = model.device
+        self.device = device
+        self.run_dir = run_dir
         
-        # Loss and optimizer with label smoothing
-        self.criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-        self.optimizer = optim.AdamW(model.get_model().parameters(), lr=learning_rate, weight_decay=0.01)
-        
-        # Learning rate scheduler with warmup
-        self.scheduler = optim.lr_scheduler.OneCycleLR(
-            self.optimizer,
-            max_lr=learning_rate,
-            epochs=30,
-            steps_per_epoch=len(train_loader),
-            pct_start=0.3,  # 30% of training for warmup
-            div_factor=10.0,  # Reduced from 25.0 to 10.0
-            final_div_factor=1000.0  # Reduced from 10000.0 to 1000.0
-        )
-        
-        # Mixed precision training
-        self.scaler = GradScaler()
-        
-        # Training metrics
+        # Initialize metrics
         self.train_losses = []
         self.test_losses = []
-        self.train_accuracies = []
-        self.test_accuracies = []
+        self.train_accs = []
+        self.test_accs = []
         self.learning_rates = []
         
-        # Early stopping parameters
-        self.best_test_loss = float('inf')
-        self.best_test_acc = 0
-        self.patience = 10
-        self.patience_counter = 0
-        self.min_delta = 0.001
+        # Initialize TensorBoard writer
+        self.writer = SummaryWriter(log_dir=run_dir)
         
-        # System monitor
-        self.monitor = SystemMonitor()
+        # Initialize model
+        self.model = self.model.to(device)
         
-        # Create metrics directory
-        os.makedirs('metrics', exist_ok=True)
-        os.makedirs('checkpoints', exist_ok=True)
+        # Initialize optimizer with weight decay
+        self.optimizer = optim.AdamW(
+            self.model.parameters(),
+            lr=0.001,
+            weight_decay=0.01
+        )
         
-    def train_epoch(self):
-        """Train for one epoch"""
-        self.model.get_model().train()
+        # Initialize learning rate scheduler with warmup
+        self.scheduler = optim.lr_scheduler.OneCycleLR(
+            self.optimizer,
+            max_lr=0.001,
+            epochs=100,
+            steps_per_epoch=len(train_loader),
+            pct_start=0.3,  # 30% of training for warmup
+            div_factor=10.0,  # Initial learning rate = max_lr/10
+            final_div_factor=1000.0,  # Min learning rate = max_lr/1000
+            anneal_strategy='cos'
+        )
+        
+        # Initialize loss function with label smoothing
+        self.criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+        
+        # Initialize mixed precision training
+        self.scaler = torch.cuda.amp.GradScaler()
+        
+        # Initialize early stopping
+        self.early_stopping = EarlyStopping(
+            patience=15,
+            min_delta=0.001,
+            verbose=True
+        )
+        
+        # Initialize checkpointing
+        self.checkpoint = Checkpoint(
+            model=self.model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            path=os.path.join(run_dir, 'checkpoints')
+        )
+        
+    def train_epoch(self, epoch):
+        self.model.train()
         running_loss = 0.0
         correct = 0
         total = 0
         
-        for inputs, labels in tqdm(self.train_loader, desc='Training'):
-            # Move data to GPU with non_blocking=True
-            inputs = inputs.to(self.device, non_blocking=True)
-            labels = labels.to(self.device, non_blocking=True)
+        # Progress bar
+        pbar = tqdm(self.train_loader, desc=f'Epoch {epoch}')
+        
+        for batch_idx, (inputs, targets) in enumerate(pbar):
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
             
+            # Mixed precision training
+            with torch.cuda.amp.autocast():
+                outputs = self.model(inputs)
+                loss = self.criterion(outputs, targets)
+            
+            # Backward pass with gradient clipping
             self.optimizer.zero_grad()
-            
-            # Mixed precision training with gradient clipping
-            with autocast():
-                outputs = self.model.get_model()(inputs)
-                loss = self.criterion(outputs, labels)
-            
             self.scaler.scale(loss).backward()
             self.scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.model.get_model().parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.scaler.step(self.optimizer)
             self.scaler.update()
             
-            # Update learning rate AFTER optimizer step
+            # Update learning rate
             self.scheduler.step()
             
+            # Update metrics
             running_loss += loss.item()
             _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
             
-            # Clear memory after each batch
-            del outputs, loss
-            clear_memory()
-            
-            # Update system metrics
-            self.monitor.update_metrics()
+            # Update progress bar
+            pbar.set_postfix({
+                'loss': running_loss/(batch_idx+1),
+                'acc': 100.*correct/total,
+                'lr': self.scheduler.get_last_lr()[0]
+            })
         
-        epoch_loss = running_loss / len(self.train_loader)
-        accuracy = 100. * correct / total
-        return epoch_loss, accuracy
+        # Log metrics
+        epoch_loss = running_loss/len(self.train_loader)
+        epoch_acc = 100.*correct/total
+        self.train_losses.append(epoch_loss)
+        self.train_accs.append(epoch_acc)
+        self.learning_rates.append(self.scheduler.get_last_lr()[0])
+        
+        self.writer.add_scalar('Loss/train', epoch_loss, epoch)
+        self.writer.add_scalar('Accuracy/train', epoch_acc, epoch)
+        self.writer.add_scalar('Learning Rate', self.scheduler.get_last_lr()[0], epoch)
+        
+        return epoch_loss, epoch_acc
     
-    def evaluate(self):
-        """Evaluate on test set"""
-        self.model.get_model().eval()
+    def test_epoch(self, epoch):
+        self.model.eval()
         running_loss = 0.0
         correct = 0
         total = 0
         
         with torch.no_grad():
-            for inputs, labels in tqdm(self.test_loader, desc='Evaluating'):
-                # Move data to GPU with non_blocking=True
-                inputs = inputs.to(self.device, non_blocking=True)
-                labels = labels.to(self.device, non_blocking=True)
+            for batch_idx, (inputs, targets) in enumerate(self.test_loader):
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
                 
-                outputs = self.model.get_model()(inputs)
-                loss = self.criterion(outputs, labels)
+                # Mixed precision inference
+                with torch.cuda.amp.autocast():
+                    outputs = self.model(inputs)
+                    loss = self.criterion(outputs, targets)
                 
                 running_loss += loss.item()
                 _, predicted = outputs.max(1)
-                total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
-                
-                # Clear memory after each batch
-                del outputs, loss
-                clear_memory()
-                
-                # Update system metrics
-                self.monitor.update_metrics()
+                total += targets.size(0)
+                correct += predicted.eq(targets).sum().item()
         
-        epoch_loss = running_loss / len(self.test_loader)
-        accuracy = 100. * correct / total
-        return epoch_loss, accuracy
+        # Log metrics
+        epoch_loss = running_loss/len(self.test_loader)
+        epoch_acc = 100.*correct/total
+        self.test_losses.append(epoch_loss)
+        self.test_accs.append(epoch_acc)
+        
+        self.writer.add_scalar('Loss/test', epoch_loss, epoch)
+        self.writer.add_scalar('Accuracy/test', epoch_acc, epoch)
+        
+        return epoch_loss, epoch_acc
     
-    def save_metrics(self):
-        """Save training metrics to CSV"""
-        metrics_df = pd.DataFrame({
-            'Epoch': range(1, len(self.train_losses) + 1),
-            'Train Loss': self.train_losses,
-            'Test Loss': self.test_losses,
-            'Train Accuracy': self.train_accuracies,
-            'Test Accuracy': self.test_accuracies,
-            'Learning Rate': self.learning_rates
-        })
-        metrics_df.to_csv('metrics/training_history.csv', index=False)
-        print("Training metrics saved to: metrics/training_history.csv")
-    
-    def train(self, num_epochs=30, save_best=True):
-        """Train the model"""
-        start_time = time.time()
+    def train(self, num_epochs=100):
+        best_acc = 0.0
         
         for epoch in range(num_epochs):
-            print(f'\nEpoch {epoch+1}/{num_epochs}')
+            # Train and test
+            train_loss, train_acc = self.train_epoch(epoch)
+            test_loss, test_acc = self.test_epoch(epoch)
             
-            # Train and evaluate
-            train_loss, train_acc = self.train_epoch()
-            test_loss, test_acc = self.evaluate()
-            
-            # Store metrics
-            self.train_losses.append(train_loss)
-            self.test_losses.append(test_loss)
-            self.train_accuracies.append(train_acc)
-            self.test_accuracies.append(test_acc)
-            self.learning_rates.append(self.optimizer.param_groups[0]['lr'])
-            
-            # Save metrics after each epoch
-            self.save_metrics()
-            
+            # Print epoch results
+            print(f'Epoch {epoch}:')
             print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%')
             print(f'Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.2f}%')
-            print(f'Learning Rate: {self.optimizer.param_groups[0]["lr"]:.6f}')
             
-            # Save best model based on test loss
-            if test_loss < self.best_test_loss - self.min_delta:
-                self.best_test_loss = test_loss
-                self.best_test_acc = test_acc
-                self.patience_counter = 0
-                
-                if save_best:
-                    self.model.save_checkpoint(
-                        'checkpoints/best_model.pth',
-                        epoch,
-                        self.optimizer,
-                        test_loss,
-                        test_acc
-                    )
-                    print(f"New best model saved! Test Loss: {test_loss:.4f}, Test Accuracy: {test_acc:.2f}%")
-            else:
-                self.patience_counter += 1
-                print(f"No improvement in test loss. Patience: {self.patience_counter}/{self.patience}")
-                
-                if self.patience_counter >= self.patience:
-                    print(f"\nEarly stopping triggered! No improvement for {self.patience} epochs.")
-                    break
+            # Save checkpoint
+            self.checkpoint.save(epoch, test_acc)
             
-            # Save last model every 5 epochs and at the end
-            if (epoch + 1) % 5 == 0 or epoch == num_epochs - 1:
-                self.model.save_checkpoint(
-                    f'checkpoints/model_epoch_{epoch+1}.pth',
-                    epoch,
-                    self.optimizer,
-                    test_loss,
-                    test_acc
-                )
-                print(f"Checkpoint saved at epoch {epoch+1}")
+            # Early stopping
+            if self.early_stopping(test_loss):
+                print('Early stopping triggered')
+                break
             
-            # Print system metrics
-            self.monitor.print_metrics()
-            
-            # Clear memory after each epoch
-            clear_memory()
+            # Update best accuracy
+            if test_acc > best_acc:
+                best_acc = test_acc
+                print(f'New best test accuracy: {best_acc:.2f}%')
         
-        # Print training time and final results
-        training_time = time.time() - start_time
-        print(f'\nTraining completed in {training_time:.2f} seconds')
-        print(f'Best test accuracy: {self.best_test_acc:.2f}%')
-        print(f'Best test loss: {self.best_test_loss:.4f}')
+        # Save final model
+        torch.save(self.model.state_dict(), os.path.join(self.run_dir, 'final_model.pth'))
         
-        # Save final system metrics
-        self.monitor.save_metrics()
+        # Close TensorBoard writer
+        self.writer.close()
         
-        return self.best_test_acc, self.best_test_loss
+        return best_acc
 
 def main():
     # Clear memory at start
@@ -414,7 +382,8 @@ def main():
         model=model,
         train_loader=train_loader,
         test_loader=test_loader,
-        learning_rate=0.001
+        device=model.device,
+        run_dir='runs/efficientnet_cifar100/'
     )
 
     # Train the model
@@ -422,7 +391,7 @@ def main():
     print(f"Training on device: {model.device}")
     print(f"Number of training batches: {len(train_loader)}")
     print(f"Number of test batches: {len(test_loader)}")
-    best_accuracy, best_loss = trainer.train(num_epochs=30, save_best=True)
+    best_accuracy = trainer.train(num_epochs=100)
 
     print("\nTraining completed! Check the following:")
     print("- Training metrics plot: training_metrics.png")

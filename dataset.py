@@ -68,6 +68,9 @@ class CIFAR100Dataset:
             transform=self.test_transform
         )
         
+        # Store class names
+        self.classes = train_dataset.classes
+        
         # Calculate class weights for balancing
         train_labels = [label for _, label in train_dataset]
         class_counts = torch.bincount(torch.tensor(train_labels))
