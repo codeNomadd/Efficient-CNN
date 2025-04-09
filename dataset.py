@@ -5,6 +5,8 @@ from tqdm import tqdm
 import os
 import random
 import numpy as np
+import torchvision
+from torch.utils.data.sampler import WeightedRandomSampler
 
 def set_seed(seed=42):
     """Set random seeds for reproducibility"""
@@ -18,84 +20,75 @@ def set_seed(seed=42):
         torch.backends.cudnn.benchmark = False
 
 class CIFAR100Dataset:
-    def __init__(self, batch_size=128, num_workers=4, seed=42):
-        """Initialize CIFAR-100 dataset with transforms"""
+    def __init__(self, batch_size=128, num_workers=4):
+        """Initialize CIFAR-100 dataset with improved augmentation"""
         self.batch_size = batch_size
         self.num_workers = num_workers
-        set_seed(seed)  # Set random seed
         
-        print("Setting up data transforms...")
-        # Define transforms
+        # Define transformations with improved augmentation
         self.train_transform = transforms.Compose([
-            transforms.Resize(224),  # EfficientNet expects 224x224
+            transforms.RandomCrop(32, padding=4),
             transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(10),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2),
+            transforms.RandomRotation(15),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+            transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
+            transforms.RandomResizedCrop(32, scale=(0.8, 1.0)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                              std=[0.229, 0.224, 0.225])
+            transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+            transforms.RandomErasing(p=0.5, scale=(0.02, 0.2), ratio=(0.3, 3.3)),
         ])
         
         self.test_transform = transforms.Compose([
-            transforms.Resize(224),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                              std=[0.229, 0.224, 0.225])
+            transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
         ])
         
     def get_data_loaders(self):
-        """Get train and test data loaders"""
-        print("Downloading CIFAR-100 dataset...")
-        
-        # Load training data
-        print("Loading training data...")
-        train_dataset = datasets.CIFAR100(
+        """Get train and test data loaders with class balancing"""
+        # Load datasets
+        train_dataset = torchvision.datasets.CIFAR100(
             root='./data',
             train=True,
             download=True,
             transform=self.train_transform
         )
         
-        # Load test data
-        print("Loading test data...")
-        test_dataset = datasets.CIFAR100(
+        test_dataset = torchvision.datasets.CIFAR100(
             root='./data',
             train=False,
             download=True,
             transform=self.test_transform
         )
         
-        print(f"Dataset loaded successfully:")
-        print(f"Training samples: {len(train_dataset)}")
-        print(f"Test samples: {len(test_dataset)}")
-        print(f"Batch size: {self.batch_size}")
-        print(f"Number of workers: {self.num_workers}")
+        # Calculate class weights for balancing
+        train_labels = [label for _, label in train_dataset]
+        class_counts = torch.bincount(torch.tensor(train_labels))
+        class_weights = 1. / class_counts
+        sample_weights = class_weights[train_labels]
         
-        print("Creating data loaders...")
-        # Create data loaders with GPU optimizations
+        # Create weighted sampler
+        sampler = WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(train_dataset),
+            replacement=True
+        )
+        
+        # Create data loaders
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.batch_size,
-            shuffle=True,
+            sampler=sampler,
             num_workers=self.num_workers,
             pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
-            generator=torch.Generator().manual_seed(42)  # Set seed for shuffling
+            drop_last=True
         )
         
         test_loader = DataLoader(
             test_dataset,
-            batch_size=self.batch_size,  # Use same batch size for consistency
+            batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2
+            pin_memory=True
         )
         
-        # Store class names
-        self.classes = train_dataset.classes
-        
-        print("Data loaders created successfully!")
         return train_loader, test_loader 

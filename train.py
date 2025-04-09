@@ -178,17 +178,19 @@ class Trainer:
         self.test_loader = test_loader
         self.device = model.device
         
-        # Loss and optimizer
-        self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.Adam(model.get_model().parameters(), lr=learning_rate)
+        # Loss and optimizer with label smoothing
+        self.criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+        self.optimizer = optim.AdamW(model.get_model().parameters(), lr=learning_rate, weight_decay=0.01)
         
-        # Learning rate scheduler
-        self.scheduler = DynamicLRScheduler(
+        # Learning rate scheduler with warmup
+        self.scheduler = optim.lr_scheduler.OneCycleLR(
             self.optimizer,
-            initial_lr=learning_rate,
-            min_lr=1e-6,
-            patience=5,  # Increased patience for LR adjustment
-            window_size=3
+            max_lr=learning_rate,
+            epochs=30,
+            steps_per_epoch=len(train_loader),
+            pct_start=0.3,  # 30% of training for warmup
+            div_factor=25.0,
+            final_div_factor=10000.0
         )
         
         # Mixed precision training
@@ -204,9 +206,9 @@ class Trainer:
         # Early stopping parameters
         self.best_test_loss = float('inf')
         self.best_test_acc = 0
-        self.patience = 15  # Increased patience for early stopping
+        self.patience = 10
         self.patience_counter = 0
-        self.min_delta = 0.0001  # Smaller delta for more precise stopping
+        self.min_delta = 0.001
         
         # System monitor
         self.monitor = SystemMonitor()
@@ -229,14 +231,19 @@ class Trainer:
             
             self.optimizer.zero_grad()
             
-            # Mixed precision training
+            # Mixed precision training with gradient clipping
             with autocast():
                 outputs = self.model.get_model()(inputs)
                 loss = self.criterion(outputs, labels)
             
             self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.get_model().parameters(), max_norm=1.0)
             self.scaler.step(self.optimizer)
             self.scaler.update()
+            
+            # Update learning rate
+            self.scheduler.step()
             
             running_loss += loss.item()
             _, predicted = outputs.max(1)
@@ -310,23 +317,19 @@ class Trainer:
             train_loss, train_acc = self.train_epoch()
             test_loss, test_acc = self.evaluate()
             
-            # Update learning rate based on test loss
-            self.scheduler.step(test_loss)
-            current_lr = self.optimizer.param_groups[0]['lr']
-            
             # Store metrics
             self.train_losses.append(train_loss)
             self.test_losses.append(test_loss)
             self.train_accuracies.append(train_acc)
             self.test_accuracies.append(test_acc)
-            self.learning_rates.append(current_lr)
+            self.learning_rates.append(self.optimizer.param_groups[0]['lr'])
             
             # Save metrics after each epoch
             self.save_metrics()
             
             print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%')
             print(f'Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.2f}%')
-            print(f'Learning Rate: {current_lr:.6f}')
+            print(f'Learning Rate: {self.optimizer.param_groups[0]["lr"]:.6f}')
             
             # Save best model based on test loss
             if test_loss < self.best_test_loss - self.min_delta:
@@ -367,11 +370,6 @@ class Trainer:
             
             # Clear memory after each epoch
             clear_memory()
-            
-            # Check if learning rate is too small
-            if current_lr <= self.scheduler.min_lr:
-                print("\nLearning rate reached minimum value. Stopping training.")
-                break
         
         # Print training time and final results
         training_time = time.time() - start_time
