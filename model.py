@@ -61,20 +61,20 @@ class CIFAR100Dataset:
         
         # Define transformations for training
         self.train_transform = transforms.Compose([
+            transforms.ToTensor(),  # Convert PIL Image to tensor first
             transforms.RandomResizedCrop(224, scale=(0.7, 1.0), ratio=(0.8, 1.2)),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomRotation(15),
             transforms.ColorJitter(0.3, 0.3, 0.3),
             transforms.RandomErasing(p=0.4, scale=(0.02, 0.2), ratio=(0.3, 3.3)),
-            transforms.ToTensor(),
             transforms.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
         ])
         
         # Define transformations for testing
         self.test_transform = transforms.Compose([
+            transforms.ToTensor(),  # Convert PIL Image to tensor first
             transforms.Resize(256),
             transforms.CenterCrop(224),
-            transforms.ToTensor(),
             transforms.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
         ])
         
