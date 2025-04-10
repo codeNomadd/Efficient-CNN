@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torchvision.models as models
-import os
 
 def get_device():
     """Get the best available device (CUDA or CPU)"""
@@ -34,21 +33,4 @@ class EfficientNetModel:
         
     def get_model(self):
         """Return the model"""
-        return self.model
-    
-    def save_checkpoint(self, path, epoch, optimizer, loss, accuracy):
-        """Save model checkpoint"""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': loss,
-            'accuracy': accuracy,
-        }, path)
-        
-    def load_checkpoint(self, path):
-        """Load model checkpoint"""
-        checkpoint = torch.load(path, map_location=self.device)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        return checkpoint 
+        return self.model 
