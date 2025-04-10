@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
 import torchvision.models as models
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-from torch.utils.data import DataLoader
 import random
 import numpy as np
 import os
@@ -51,65 +48,4 @@ class EfficientNetModel:
         
     def get_model(self):
         """Return the model"""
-        return self.model
-
-class CIFAR100Dataset:
-    def __init__(self, batch_size=128, num_workers=4):
-        """Initialize CIFAR-100 dataset with appropriate transformations"""
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        
-        # Define transformations for training
-        self.train_transform = transforms.Compose([
-            transforms.RandomResizedCrop(224, scale=(0.7, 1.0), ratio=(0.8, 1.2)),
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomRotation(15),
-            transforms.ColorJitter(0.3, 0.3, 0.3),
-            transforms.RandomErasing(p=0.4, scale=(0.02, 0.2), ratio=(0.3, 3.3)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
-        ])
-        
-        # Define transformations for testing
-        self.test_transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
-        ])
-        
-    def get_data_loaders(self):
-        """Get train and test data loaders"""
-        # Load CIFAR-100 dataset
-        train_dataset = datasets.CIFAR100(
-            root='./data',
-            train=True,
-            download=True,
-            transform=self.train_transform
-        )
-        
-        test_dataset = datasets.CIFAR100(
-            root='./data',
-            train=False,
-            download=True,
-            transform=self.test_transform
-        )
-        
-        # Create data loaders
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            pin_memory=True
-        )
-        
-        test_loader = DataLoader(
-            test_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=True
-        )
-        
-        return train_loader, test_loader 
+        return self.model 
