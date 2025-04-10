@@ -1,5 +1,10 @@
-torch>=2.0.0
-torchvision>=0.15.0
+torch==1.12.1
+torchvision==0.13.1
+torchinfo>=1.7.0
+tqdm>=4.65.0
 numpy>=1.21.0
-tqdm>=4.62.0
-torchinfo>=1.8.0 
+matplotlib>=3.7.1
+seaborn>=0.12.2
+scikit-learn>=1.2.2
+pandas>=2.0.2
+tensorboard>=2.13.0 
