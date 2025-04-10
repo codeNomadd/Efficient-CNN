@@ -292,8 +292,7 @@ def main():
     trainer = Trainer(
         model=model,
         train_loader=train_loader,
-        test_loader=test_loader,
-        device=model.device
+        test_loader=test_loader
     )
 
     # Train the model
