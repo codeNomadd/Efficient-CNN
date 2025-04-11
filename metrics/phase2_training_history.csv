@@ -1,0 +1,2 @@
+epoch,train_loss,test_loss,train_acc,test_acc,lr,epoch_time
+31,2.9081,5.1949,35.98,1.45,0.010000,175.34
