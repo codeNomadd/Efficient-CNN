@@ -107,9 +107,10 @@ class Trainer:
         
         # Load optimizer and scheduler states if checkpoint exists
         if checkpoint is not None:
-            if 'optimizer_state_dict' in checkpoint:
-                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                print(f"Optimizer state loaded from checkpoint")
+            # Don't load optimizer state since we're switching from AdamW to SGD
+            print(f"Note: Not loading optimizer state due to optimizer change (AdamW -> SGD)")
+            
+            # Load scheduler state if available
             if 'scheduler_state_dict' in checkpoint:
                 self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
                 print(f"Scheduler state loaded from checkpoint")
