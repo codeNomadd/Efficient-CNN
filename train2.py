@@ -72,7 +72,7 @@ def mixup_criterion(criterion, pred, y_a, y_b, lam):
     return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
 class Trainer:
-    def __init__(self, model, train_loader, test_loader, learning_rate=0.01, gradient_accumulation_steps=4, use_mixup=True):
+    def __init__(self, model, train_loader, test_loader, learning_rate=0.01, gradient_accumulation_steps=4, use_mixup=True, checkpoint=None):
         """Initialize trainer for phase 2"""
         self.model = model
         self.train_loader = train_loader
@@ -105,11 +105,24 @@ class Trainer:
             eta_min=1e-6
         )
         
+        # Load optimizer and scheduler states if checkpoint exists
+        if checkpoint is not None:
+            if 'optimizer_state_dict' in checkpoint:
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                print(f"Optimizer state loaded from checkpoint")
+            if 'scheduler_state_dict' in checkpoint:
+                self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                print(f"Scheduler state loaded from checkpoint")
+                print(f"Current learning rate: {self.optimizer.param_groups[0]['lr']:.6f}")
+        
         # Mixed precision training
         self.scaler = GradScaler()
         
         # Initialize EMA
         self.ema = ModelEMA(model.get_model(), decay=0.999)
+        if checkpoint is not None and 'ema_state_dict' in checkpoint:
+            self.ema.load_state_dict(checkpoint['ema_state_dict'])
+            print(f"EMA state loaded from checkpoint")
         
         # Create directories
         os.makedirs('metrics', exist_ok=True)
@@ -332,7 +345,23 @@ def load_checkpoint(model, checkpoint_path):
     checkpoint = torch.load(checkpoint_path)
     model.get_model().load_state_dict(checkpoint['model_state_dict'])
     model.get_model().train()  # Set model to training mode
-    return checkpoint['epoch'], checkpoint['accuracy']
+    epoch = checkpoint['epoch']
+    
+    # Get best accuracy from test accuracies if available, otherwise use saved accuracy
+    best_acc = checkpoint.get('accuracy', -1)
+    if 'test_accuracies' in checkpoint:
+        best_acc = max(checkpoint['test_accuracies'])  # get best recorded test acc
+    
+    # Print detailed checkpoint information
+    print(f"\nCheckpoint Information:")
+    print(f"Epoch: {epoch}")
+    print(f"Saved accuracy: {checkpoint.get('accuracy', -1):.2f}%")
+    if 'test_accuracies' in checkpoint:
+        print(f"Best test accuracy: {best_acc:.2f}%")
+        print(f"Test accuracy history: {[f'{acc:.2f}%' for acc in checkpoint['test_accuracies']]}")
+    print(f"Model state loaded successfully")
+    
+    return epoch, best_acc, checkpoint
 
 def clear_memory():
     """Clear GPU and CPU memory"""
@@ -415,8 +444,8 @@ def main():
 
     # Load checkpoint from phase 1
     print("\nLoading checkpoint from phase 1...")
-    start_epoch, start_acc = load_checkpoint(model, 'checkpoints/model_epoch_30.pth')
-    print(f"Loaded checkpoint from epoch {start_epoch} with accuracy {start_acc:.2f}%")
+    start_epoch, start_acc, checkpoint = load_checkpoint(model, 'checkpoints/model_epoch_30.pth')
+    print(f"\nStarting phase 2 training from epoch {start_epoch} with best accuracy {start_acc:.2f}%")
 
     # Initialize dataset
     print("\nLoading CIFAR-100 dataset...")
@@ -432,8 +461,24 @@ def main():
         model=model,
         train_loader=train_loader,
         test_loader=test_loader,
-        learning_rate=0.01  # Lower learning rate for fine-tuning
+        learning_rate=0.01,  # Lower learning rate for fine-tuning
+        gradient_accumulation_steps=4,
+        use_mixup=True,
+        checkpoint=checkpoint  # Pass checkpoint to restore states
     )
+
+    # Print training configuration
+    print("\nPhase 2 Training Configuration:")
+    print(f"Optimizer: SGD with momentum=0.9, weight_decay=5e-4, nesterov=True")
+    print(f"Learning Rate: 0.01 with CosineAnnealingLR (T_max=20, eta_min=1e-6)")
+    print(f"Current Learning Rate: {trainer.optimizer.param_groups[0]['lr']:.6f}")
+    print(f"Mixup: Enabled (alpha=0.1)")
+    print(f"EMA: Enabled (decay=0.999)")
+    print(f"Gradient Accumulation: 4 steps")
+    print(f"Mixed Precision: Enabled")
+    print(f"Early Stopping: 5 epochs patience")
+    print(f"Checkpoint Saving: Every epoch")
+    print(f"Metrics Logging: CSV and plots")
 
     # Train the model
     print("\nStarting phase 2 training...")
