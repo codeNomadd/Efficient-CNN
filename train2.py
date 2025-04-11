@@ -307,6 +307,71 @@ def load_checkpoint(model, checkpoint_path):
     model.get_model().load_state_dict(checkpoint['model_state_dict'])
     return checkpoint['epoch'], checkpoint['accuracy']
 
+def clear_memory():
+    """Clear GPU and CPU memory"""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
+def save_seed_info(seed):
+    """Save seed information for reproducibility"""
+    seed_info = {
+        'seed': seed,
+        'python_version': platform.python_version(),
+        'torch_version': torch.__version__,
+        'cuda_version': torch.version.cuda if torch.cuda.is_available() else 'N/A',
+        'cudnn_version': torch.backends.cudnn.version() if torch.cuda.is_available() else 'N/A',
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    os.makedirs('metrics', exist_ok=True)
+    with open('metrics/seed_info.json', 'w') as f:
+        json.dump(seed_info, f, indent=4)
+
+def save_model_summary(model, batch_size):
+    """Save model summary to file"""
+    os.makedirs('metrics', exist_ok=True)
+    with open('metrics/model_summary.txt', 'w') as f:
+        f.write(str(summary(model, input_size=(batch_size, 3, 224, 224))))
+
+def plot_metrics(train_losses, test_losses, train_accuracies, test_accuracies, learning_rates):
+    """Plot training metrics"""
+    os.makedirs('plots', exist_ok=True)
+    
+    # Create figure with subplots
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 15))
+    
+    # Plot losses
+    ax1.plot(train_losses, label='Training Loss', marker='o', markersize=3)
+    ax1.plot(test_losses, label='Test Loss', marker='o', markersize=3)
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Training and Test Loss')
+    ax1.legend()
+    ax1.grid(True)
+    
+    # Plot accuracies
+    ax2.plot(train_accuracies, label='Training Accuracy', marker='o', markersize=3)
+    ax2.plot(test_accuracies, label='Test Accuracy', marker='o', markersize=3)
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Accuracy (%)')
+    ax2.set_title('Training and Test Accuracy')
+    ax2.legend()
+    ax2.grid(True)
+    
+    # Plot learning rate
+    ax3.plot(learning_rates, label='Learning Rate', marker='o', markersize=3)
+    ax3.set_xlabel('Epoch')
+    ax3.set_ylabel('Learning Rate')
+    ax3.set_title('Learning Rate Schedule')
+    ax3.legend()
+    ax3.grid(True)
+    
+    # Adjust layout and save
+    plt.tight_layout()
+    plt.savefig('plots/training_metrics.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
 def main():
     # Clear memory at start
     clear_memory()
