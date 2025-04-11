@@ -44,8 +44,16 @@ class ModelEMA:
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 param.data.copy_(self.ema[name])
+    
+    def state_dict(self):
+        """Return EMA state dict"""
+        return self.ema
+    
+    def load_state_dict(self, state_dict):
+        """Load EMA state dict"""
+        self.ema = state_dict
 
-def mixup_data(x, y, alpha=0.2):
+def mixup_data(x, y, alpha=0.1):
     """Returns mixed inputs, pairs of targets, and lambda"""
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
@@ -64,13 +72,14 @@ def mixup_criterion(criterion, pred, y_a, y_b, lam):
     return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
 class Trainer:
-    def __init__(self, model, train_loader, test_loader, learning_rate=0.01, gradient_accumulation_steps=4):
+    def __init__(self, model, train_loader, test_loader, learning_rate=0.01, gradient_accumulation_steps=4, use_mixup=True):
         """Initialize trainer for phase 2"""
         self.model = model
         self.train_loader = train_loader
         self.test_loader = test_loader
         self.device = model.device
         self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.use_mixup = use_mixup
         self.best_acc = 0
         self.current_epoch = 0
         self.interrupted = False
@@ -135,7 +144,7 @@ class Trainer:
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': self.model.get_model().state_dict(),
-            'ema_state_dict': self.ema.ema.state_dict(),
+            'ema_state_dict': self.ema.state_dict(),  # Use proper state_dict method
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'loss': test_loss,
@@ -156,7 +165,7 @@ class Trainer:
             print(f'Checkpoint saved for epoch {epoch+1}')
 
     def train_epoch(self):
-        """Train for one epoch with Mixup"""
+        """Train for one epoch with optional Mixup"""
         self.model.get_model().train()
         total_loss = 0
         correct = 0
@@ -167,8 +176,11 @@ class Trainer:
         for batch_idx, (inputs, targets) in enumerate(pbar):
             inputs, targets = inputs.to(self.device), targets.to(self.device)
             
-            # Apply Mixup
-            inputs, targets_a, targets_b, lam = mixup_data(inputs, targets, alpha=0.2)
+            # Apply Mixup if enabled
+            if self.use_mixup:
+                inputs, targets_a, targets_b, lam = mixup_data(inputs, targets, alpha=0.1)
+            else:
+                targets_a, targets_b, lam = targets, targets, 1.0
             
             # Forward pass with mixed precision
             with autocast():
@@ -190,11 +202,14 @@ class Trainer:
                 # Update EMA
                 self.ema.update()
             
-            # Update progress bar
+            # Update progress bar with original accuracy
+            with torch.no_grad():
+                original_outputs = self.model.get_model()(inputs)
+                _, predicted = original_outputs.max(1)
+                total += targets.size(0)
+                correct += predicted.eq(targets).sum().item()
+            
             total_loss += loss.item() * self.gradient_accumulation_steps
-            _, predicted = outputs.max(1)
-            total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
             
             pbar.set_postfix({
                 'loss': f'{total_loss/(batch_idx+1):.3f}',
@@ -206,7 +221,14 @@ class Trainer:
 
     def test(self):
         """Test the model using EMA weights"""
-        self.ema.ema.eval()
+        # Store original model state
+        original_model = self.model.get_model()
+        original_mode = original_model.training
+        
+        # Apply EMA weights and set to eval mode
+        self.ema.apply()
+        self.model.get_model().eval()
+        
         total_loss = 0
         correct = 0
         total = 0
@@ -219,7 +241,7 @@ class Trainer:
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
                 
                 with autocast():
-                    outputs = self.ema.ema(inputs)
+                    outputs = self.model.get_model()(inputs)
                     loss = self.criterion(outputs, targets)
                 
                 total_loss += loss.item()
@@ -234,6 +256,9 @@ class Trainer:
                     'loss': f'{total_loss/(batch_idx+1):.3f}',
                     'acc': f'{100.*correct/total:.2f}%'
                 })
+        
+        # Restore original model state
+        self.model.get_model().train(original_mode)
         
         return total_loss/len(self.test_loader), 100.*correct/total, all_preds, all_targets
 
@@ -306,6 +331,7 @@ def load_checkpoint(model, checkpoint_path):
     """Load model checkpoint"""
     checkpoint = torch.load(checkpoint_path)
     model.get_model().load_state_dict(checkpoint['model_state_dict'])
+    model.get_model().train()  # Set model to training mode
     return checkpoint['epoch'], checkpoint['accuracy']
 
 def clear_memory():
