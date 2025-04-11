@@ -11,10 +11,10 @@ import platform
 from datetime import datetime
 from torch.cuda.amp import autocast, GradScaler
 from torchinfo import summary
+from model import EfficientNetModel, CIFAR100Dataset, set_seed
 import matplotlib.pyplot as plt
 import signal
 import sys
-from model import EfficientNetModel, CIFAR100Dataset, set_seed
 
 # === CONFIGURATION ===
 SEED = 42
@@ -105,6 +105,7 @@ class Trainer:
         self.early_stop_counter = 0
 
         os.makedirs(f'{EXP_DIR}/checkpoints', exist_ok=True)
+        os.makedirs(f'{EXP_DIR}/metrics', exist_ok=True)
         with open(f'{EXP_DIR}/metrics/training_history.csv', 'w') as f:
             f.write('epoch,train_loss,test_loss,train_acc,test_acc,lr,epoch_time\n')
 
@@ -112,17 +113,17 @@ class Trainer:
         signal.signal(signal.SIGTERM, self.handle_interrupt)
 
     def handle_interrupt(self, signum, frame):
-        print('\nTraining interrupted. Saving...')
+        print("\nTraining interrupted! Saving...")
         self.interrupted = True
 
-    def adjust_for_phase2(self):
+    def switch_to_phase2(self):
         self.phase = 2
         self.optimizer = optim.SGD(self.model.get_model().parameters(), lr=PHASE2_LR, momentum=0.9, weight_decay=5e-4, nesterov=True)
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=PHASE2_EPOCHS, eta_min=1e-6)
-        print("\n--- Switched to Phase 2 (SGD) ---\n")
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=PHASE2_EPOCHS, eta_min=1e-6)
+        print("\n🔁 Switching to Phase 2 configuration")
 
-    def save_checkpoint(self, epoch, test_loss, test_acc):
-        checkpoint = {
+    def save_checkpoint(self, epoch, test_loss, test_acc, is_best=False):
+        ckpt = {
             'epoch': epoch,
             'model_state_dict': self.model.get_model().state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
@@ -130,44 +131,42 @@ class Trainer:
             'loss': test_loss,
             'accuracy': test_acc
         }
-        torch.save(checkpoint, f'{EXP_DIR}/checkpoints/epoch_{epoch+1}.pth')
-        if test_acc > self.best_acc:
-            self.best_acc = test_acc
-            torch.save(self.model.get_model().state_dict(), f'{EXP_DIR}/checkpoints/best_model.pth')
-            print(f'New best accuracy: {test_acc:.2f}%')
-            self.early_stop_counter = 0
-        else:
-            self.early_stop_counter += 1
+        torch.save(ckpt, f'{EXP_DIR}/checkpoints/epoch_{epoch+1}.pth')
+        if is_best:
+            torch.save(ckpt, f'{EXP_DIR}/checkpoints/best_model.pth')
 
     def train_epoch(self):
         self.model.get_model().train()
-        correct = total = total_loss = 0
-        pbar = tqdm(self.train_loader)
+        total_loss, correct, total = 0, 0, 0
+        pbar = tqdm(self.train_loader, desc='Training')
 
         for inputs, targets in pbar:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
+
             with autocast():
                 outputs = self.model.get_model()(inputs)
-                loss = self.criterion(outputs, targets) / GRAD_ACCUM_STEPS
+                loss = self.criterion(outputs, targets)
+                loss = loss / GRAD_ACCUM_STEPS
 
             self.scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(self.model.get_model().parameters(), max_norm=1.0)
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-            self.optimizer.zero_grad()
 
+            if (total // inputs.size(0) + 1) % GRAD_ACCUM_STEPS == 0:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.optimizer.zero_grad()
+
+            total_loss += loss.item() * GRAD_ACCUM_STEPS
             _, predicted = outputs.max(1)
             correct += predicted.eq(targets).sum().item()
             total += targets.size(0)
-            total_loss += loss.item() * GRAD_ACCUM_STEPS
 
-            pbar.set_postfix(loss=total_loss/(total/targets.size(0)), acc=100.*correct/total)
+            pbar.set_postfix(loss=total_loss / (total / inputs.size(0)), acc=100. * correct / total)
 
-        return total_loss/len(self.train_loader), 100.*correct/total
+        return total_loss / len(self.train_loader), 100. * correct / total
 
-    def test(self):
+    def evaluate(self):
         self.model.get_model().eval()
-        total_loss = correct = total = 0
+        total_loss, correct, total = 0, 0, 0
 
         with torch.no_grad():
             for inputs, targets in self.test_loader:
@@ -175,57 +174,64 @@ class Trainer:
                 with autocast():
                     outputs = self.model.get_model()(inputs)
                     loss = self.criterion(outputs, targets)
+                total_loss += loss.item()
                 _, predicted = outputs.max(1)
                 correct += predicted.eq(targets).sum().item()
                 total += targets.size(0)
-                total_loss += loss.item()
 
-        return total_loss/len(self.test_loader), 100.*correct/total
+        return total_loss / len(self.test_loader), 100. * correct / total
 
     def train(self):
         total_epochs = PHASE1_EPOCHS + PHASE2_EPOCHS
+
         for epoch in range(total_epochs):
             if self.interrupted:
                 break
 
             if epoch == PHASE1_EPOCHS:
-                self.adjust_for_phase2()
+                self.switch_to_phase2()
 
-            print(f"\nEpoch {epoch+1}/{total_epochs}")
+            print(f"\nEpoch {epoch + 1}/{total_epochs}")
             start_time = time.time()
+
             train_loss, train_acc = self.train_epoch()
-            test_loss, test_acc = self.test()
-            lr = self.optimizer.param_groups[0]['lr']
-            self.scheduler.step()
+            test_loss, test_acc = self.evaluate()
+            current_lr = self.optimizer.param_groups[0]['lr']
+            epoch_time = time.time() - start_time
 
             self.train_losses.append(train_loss)
             self.test_losses.append(test_loss)
             self.train_accs.append(train_acc)
             self.test_accs.append(test_acc)
-            self.lrs.append(lr)
+            self.lrs.append(current_lr)
 
             with open(f'{EXP_DIR}/metrics/training_history.csv', 'a') as f:
-                f.write(f'{epoch+1},{train_loss:.4f},{test_loss:.4f},{train_acc:.2f},{test_acc:.2f},{lr:.6f},{time.time()-start_time:.2f}\n')
+                f.write(f'{epoch+1},{train_loss:.4f},{test_loss:.4f},{train_acc:.2f},{test_acc:.2f},{current_lr:.6f},{epoch_time:.2f}\n')
 
-            self.save_checkpoint(epoch, test_loss, test_acc)
+            self.scheduler.step()
+
+            self.save_checkpoint(epoch, test_loss, test_acc, is_best=(test_acc > self.best_acc))
+            if test_acc > self.best_acc:
+                self.best_acc = test_acc
+                self.early_stop_counter = 0
+            else:
+                self.early_stop_counter += 1
+                if self.early_stop_counter >= EARLY_STOPPING_PATIENCE:
+                    print(f"\n⏹️ Early stopping triggered at epoch {epoch + 1}")
+                    break
+
             plot_metrics(self.train_losses, self.test_losses, self.train_accs, self.test_accs, self.lrs)
 
-            if self.phase == 2 and self.early_stop_counter >= EARLY_STOPPING_PATIENCE:
-                print("\nEarly stopping triggered.")
-                break
+        print(f"\n✅ Training completed! Best accuracy: {self.best_acc:.2f}%")
 
-        print(f"\nTraining finished. Best Accuracy: {self.best_acc:.2f}%")
-
-# === MAIN ENTRY ===
+# === MAIN EXECUTION ===
 def main():
     clear_memory()
     set_seed(SEED)
-    save_seed_info(SEED)
-
     model = EfficientNetModel()
     dataset = CIFAR100Dataset(batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
     train_loader, test_loader = dataset.get_data_loaders()
-
+    save_seed_info(SEED)
     save_model_summary(model.get_model())
 
     trainer = Trainer(model, train_loader, test_loader)
