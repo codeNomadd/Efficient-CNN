@@ -22,27 +22,28 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 class ModelEMA:
     """Model Exponential Moving Average"""
     def __init__(self, model, decay=0.999):
-        self.ema = self._get_model_ema(model)
+        self.ema = {}
         self.decay = decay
         self.model = model
-
-    def _get_model_ema(self, model):
-        """Create EMA model"""
-        ema_model = type(model)()
-        ema_model.load_state_dict(model.state_dict())
-        for param in ema_model.parameters():
-            param.detach_()
-        return ema_model
-
+        self._register_model()
+    
+    def _register_model(self):
+        """Register model parameters for EMA"""
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                self.ema[name] = param.data.clone()
+    
     def update(self):
         """Update EMA parameters"""
-        with torch.no_grad():
-            for ema_param, model_param in zip(self.ema.parameters(), self.model.parameters()):
-                ema_param.data.mul_(self.decay).add_(model_param.data, alpha=1 - self.decay)
-
-    def get_ema_model(self):
-        """Get EMA model"""
-        return self.ema
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                self.ema[name] = self.ema[name] * self.decay + param.data * (1 - self.decay)
+    
+    def apply(self):
+        """Apply EMA parameters to model"""
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                param.data.copy_(self.ema[name])
 
 def mixup_data(x, y, alpha=0.2):
     """Returns mixed inputs, pairs of targets, and lambda"""
